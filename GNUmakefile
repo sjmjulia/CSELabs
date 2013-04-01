@@ -1,4 +1,4 @@
-LAB=1
+LAB=2
 SOL=0
 RPC=./rpc
 LAB1GE=$(shell expr $(LAB) \>\= 1)
@@ -62,7 +62,7 @@ rpc/librpc.a: $(patsubst %.cc,%.o,$(rpclib))
 rpc/rpctest=rpc/rpctest.cc
 rpc/rpctest: $(patsubst %.cc,%.o,$(rpctest)) rpc/librpc.a
 
-lock_demo=lock_demo.cc lock_client.cc extent_client.cc
+lock_demo=lock_demo.cc lock_client.cc
 lock_demo : $(patsubst %.cc,%.o,$(lock_demo)) rpc/librpc.a
 
 lock_tester=lock_tester.cc lock_client.cc
