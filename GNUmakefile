@@ -35,11 +35,11 @@ CXX = g++
 
 lab:  lab$(LAB)
 lab1: yfs_client
-lab2: rpc/rpctest lock_server lock_tester lock_demo yfs_client extent_server
-lab3: yfs_client extent_server lock_server test-lab-3-b test-lab-3-c
-lab4: yfs_client extent_server lock_server lock_tester test-lab-3-b\
-	 test-lab-3-c
-lab5: yfs_client extent_server lock_server test-lab-3-b test-lab-3-c
+lab2: rpc/rpctest lock_server lock_tester lock_demo yfs_client extent_server test-lab-2-a test-lab-2-b
+lab3: yfs_client extent_server lock_server test-lab-2-a test-lab-2-b
+lab4: yfs_client extent_server lock_server lock_tester test-lab-2-a\
+	 test-lab-2-b
+lab5: yfs_client extent_server lock_server test-lab-2-a test-lab-2-b
 lab6: lock_server rsm_tester
 lab7: lock_tester lock_server rsm_tester
 
@@ -88,7 +88,7 @@ endif
 lock_server : $(patsubst %.cc,%.o,$(lock_server)) rpc/librpc.a
 
 yfs_client=yfs_client.cc extent_client.cc fuse.cc
-ifeq ($(LAB3GE),1)
+ifeq ($(LAB2GE),1)
   yfs_client += lock_client.cc
 endif
 ifeq ($(LAB7GE),1)
@@ -97,15 +97,15 @@ endif
 ifeq ($(LAB4GE),1)
   yfs_client += lock_client_cache.cc
 endif
-yfs_client : $(patsubst %.cc,%.o,$(yfs_client))
+yfs_client : $(patsubst %.cc,%.o,$(yfs_client))  rpc/librpc.a
 
 extent_server=extent_server.cc extent_smain.cc
 extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 
-test-lab-3-b=test-lab-3-b.c
-test-lab-3-b:  $(patsubst %.c,%.o,$(test_lab_4-b)) rpc/librpc.a
+test-lab-2-a=test-lab-2-a.c
+test-lab-2-a:  $(patsubst %.c,%.o,$(test_lab_4-b)) rpc/librpc.a
 
-test-lab-3-c=test-lab-3-c.c
+test-lab-2-b=test-lab-2-b.c
 test-lab-4-c:  $(patsubst %.c,%.o,$(test_lab_4-c)) rpc/librpc.a
 
 rsm_tester=rsm_tester.cc rsmtest_client.cc
@@ -123,7 +123,7 @@ fuse.o: fuse.cc
 -include *.d
 -include rpc/*.d
 
-clean_files=rpc/rpctest rpc/*.o rpc/*.d rpc/librpc.a *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab-3-b test-lab-3-c rsm_tester
+clean_files=rpc/rpctest rpc/*.o rpc/*.d rpc/librpc.a *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab-2-a test-lab-2-b rsm_tester
 .PHONY: clean handin
 clean: 
 	rm $(clean_files) -rf 
