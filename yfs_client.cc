@@ -13,9 +13,10 @@
 #include <map>
 #include <string.h>
 
-yfs_client::yfs_client()
+
+yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
-  ec = new extent_client();
+  ec = new extent_client(extent_dst);
 
 }
 

@@ -7,8 +7,10 @@
 #include "extent_protocol.h"
 #define BSIZE 512
 class extent_client {
+ private:
+  rpcc *cl;
  public:
-  extent_client();
+  extent_client(std::string dst);
 
   extent_protocol::status get(extent_protocol::extentid_t eid, 
 			      char* buf);

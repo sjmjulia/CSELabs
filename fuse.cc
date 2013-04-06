@@ -499,7 +499,7 @@ main(int argc, char *argv[])
   setvbuf(stdout, NULL, _IONBF, 0);
 
   if(argc != 2){
-    fprintf(stderr, "Usage: yfs_client <mountpoint>\n");
+    fprintf(stderr, "Usage: yfs_client <mountpoint> <port-extent-server> <port-lock-server>\n");
     exit(1);
   }
   mountpoint = argv[1];
@@ -508,7 +508,7 @@ main(int argc, char *argv[])
 
   myid = random();
 
-  yfs = new yfs_client();
+  yfs = new yfs_client(argv[2], argv[3]);
 
   fuseserver_oper.getattr    = fuseserver_getattr;
   fuseserver_oper.statfs     = fuseserver_statfs;
