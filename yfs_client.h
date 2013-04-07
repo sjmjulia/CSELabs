@@ -36,7 +36,6 @@ class yfs_client {
   static std::string filename(inum);
   static inum n2i(std::string);
  public:
-
   yfs_client(std::string extent_dst, std::string lock_dst);
   bool isfile(inum);
   bool isdir(inum);

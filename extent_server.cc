@@ -23,12 +23,9 @@ int extent_server::get(extent_protocol::extentid_t id, std::string &buf)
   return extent_protocol::IOERR;
 }
 
+// a demo to show how to implement server side
 int extent_server::getattr(extent_protocol::extentid_t id, extent_protocol::attr &a)
 {
-  // You fill this in for Lab 2.
-  // You replace this with a real implementation. We send a phony response
-  // for now because it's difficult to get FUSE to do anything (including
-  // unmount) if getattr fails.
   a.size = 0;
   a.atime = 0;
   a.mtime = 0;
