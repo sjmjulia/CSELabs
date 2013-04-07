@@ -662,7 +662,7 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
 
-        // You fill this in for Lab 1.
+        // You fill this in for Lab 2.
 	return NEW;
 }
 
@@ -676,7 +676,7 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		char *b, int sz)
 {
 	ScopedLock rwl(&reply_window_m_);
-        // You fill this in for Lab 1.
+        // You fill this in for Lab 2.
 }
 
 void
