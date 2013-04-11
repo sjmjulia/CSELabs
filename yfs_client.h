@@ -6,6 +6,7 @@
 #include "extent_client.h"
 #include <vector>
 #include <map>
+#include <fcntl.h>
 
 #define YFS_SET_ATTR_SIZE  0x1
 class yfs_client {
@@ -35,6 +36,14 @@ class yfs_client {
  private:
   static std::string filename(inum);
   static inum n2i(std::string);
+
+    //filling begin
+    int get(inum ino, char *buf);
+    int put(inum &ino, char *buf, bool add);
+    int remove(inum ino);
+    int recursive_unlink(inum ino);
+    //filling end
+
  public:
 
   yfs_client();
@@ -51,9 +60,51 @@ class yfs_client {
   inum lookup(inum parent, const std::string name);
   int mkdir(inum parent, const std::string name,inum &ino);
   int unlink(inum parent, const std::string name);
+
+  //finding begin
+  int inner_read(inum ino,size_t size,off_t off,std::string &buf);
+  int inner_write(inum ino,const char* buf,size_t &size,off_t off);
+  bool issym(inum ino);
+  int symlink(inum parent, const std::string name, const std::string link, inum &ino);
+  int readlink(inum ino, std::string &link);
+  //finding end
+
 };
+
+#define INODE_DIRECT_BLOCK_NUM 16
+#define INODE_DIR_ENTRY_NUM 5
+#define INODE_FILE_NAME_LEN 64
+#define SUPER_BLOCK_IDENTITY 0
+#define SUPER_BLOCK_INODE_NUM_OFFSET 32
+#define SUPER_BLOCK_ROOT_INODE_OFFSET 64
+#define SUPER_BLOCK_BLOCK_BITMAP_OFFSET 80
+#define BLOCK_BITMAP_BEGIN_BLOCK 10
+#define BLOCK_BITMAP_END_BLOCK 200
+#define BITMAP_PER_BLOCK 4096
+
 struct inode
 {
   //fill this in lab1
+    //filling begin
+    char mode;
+    unsigned long long size;
+    unsigned long atime;
+    unsigned long mtime;
+    unsigned long ctime;
+    union {//info{
+        struct {//file_node {
+            yfs_client::inum direct_blocks[INODE_DIRECT_BLOCK_NUM];
+        };
+        struct {// dir_node {
+            struct {
+                char name[INODE_FILE_NAME_LEN];
+                yfs_client::inum inum;
+            }dir_entries[INODE_DIR_ENTRY_NUM];
+        };
+    };
+    yfs_client::inum next_inode;
+    //filling end
 };
+#define M_INODE_PTR(x) ((inode *)(x))
+
 #endif 
