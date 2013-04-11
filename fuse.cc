@@ -48,6 +48,21 @@ getattr(yfs_client::inum inum, struct stat &st)
 
   st.st_ino = inum;
   printf("getattr %016llx %d\n", inum, yfs->isfile(inum));
+  //filling begin
+  if(yfs->issym(inum)){
+     yfs_client::fileinfo info;
+     ret = yfs->getfile(inum, info);
+     if(ret != yfs_client::OK)
+       return ret;
+     st.st_mode = S_IFLNK | 0666;
+     st.st_nlink = 1;
+     st.st_atime = info.atime;
+     st.st_mtime = info.mtime;
+     st.st_ctime = info.ctime;
+     st.st_size = info.size;
+     printf("   getattr -> %llu\n", info.size);
+  } else
+  //filling end
   if(yfs->isfile(inum)){
      yfs_client::fileinfo info;
      ret = yfs->getfile(inum, info);
@@ -472,6 +487,71 @@ fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
   }
 }
 
+
+
+//filling begin
+void
+fuseserver_symlink(fuse_req_t req, const char *link, fuse_ino_t parent,
+     const char *name)
+{
+  struct fuse_entry_param e;
+  // In yfs, timeouts are always set to 0.0, and generations are always set to 0
+  e.attr_timeout = 0.0;
+  e.entry_timeout = 0.0;
+  e.generation = 0;
+  // Suppress compiler warning of unused e.
+  (void) e;
+
+#if 1
+  yfs_client::status ret= yfs_client::OK;
+  yfs_client::inum ino;
+  ret = yfs->symlink(parent, name, link, ino);
+  if(ret ==  yfs_client::OK)
+  {
+    e.ino =ino;
+    getattr(ino,e.attr);
+    fuse_reply_entry(req, &e);
+  }
+  else if(ret ==  yfs_client::EXIST)
+  {
+    fuse_reply_err(req, EEXIST);
+  }
+  else
+  {
+    fuse_reply_err(req, ENOSYS);
+  }
+#else
+  fuse_reply_err(req, ENOSYS);
+#endif
+}
+
+void
+fuseserver_readlink(fuse_req_t req, fuse_ino_t ino)
+{
+  std::string link;
+
+#if 1
+  yfs_client::status ret= yfs_client::OK;
+  ret = yfs->readlink(ino, link);
+  if(ret ==  yfs_client::OK)
+  {
+    fuse_reply_readlink(req, link.c_str());
+  }
+  else if(ret ==  yfs_client::EXIST)
+  {
+    fuse_reply_err(req, EEXIST);
+  }
+  else
+  {
+    fuse_reply_err(req, ENOSYS);
+  }
+#else
+  fuse_reply_err(req, ENOSYS);
+#endif
+}
+//filling end
+
+
 void
 fuseserver_statfs(fuse_req_t req)
 {
@@ -522,6 +602,10 @@ main(int argc, char *argv[])
   fuseserver_oper.setattr    = fuseserver_setattr;
   fuseserver_oper.unlink     = fuseserver_unlink;
   fuseserver_oper.mkdir      = fuseserver_mkdir;
+  //filling begin
+  fuseserver_oper.symlink = fuseserver_symlink;
+  fuseserver_oper.readlink = fuseserver_readlink;
+  //filling end 
 
   const char *fuse_argv[20];
   int fuse_argc = 0;
