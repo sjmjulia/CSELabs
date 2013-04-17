@@ -578,7 +578,7 @@ main(int argc, char *argv[])
 
   setvbuf(stdout, NULL, _IONBF, 0);
 
-  if(argc != 2){
+  if(argc != 4){
     fprintf(stderr, "Usage: yfs_client <mountpoint> <port-extent-server> <port-lock-server>\n");
     exit(1);
   }

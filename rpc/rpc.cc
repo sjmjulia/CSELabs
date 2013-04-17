@@ -662,6 +662,54 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
 
+    std::map<unsigned int, std::list<reply_t> >::iterator iter;
+    iter = reply_window_.find(clt_nonce);
+    if (reply_window_.end() == iter) {
+        //blabla
+        printf("no here\n");
+        return NEW;
+    }
+    std::list<reply_t>::iterator list_iter = iter->second.begin();
+    while (list_iter != iter->second.end()) {
+        if (list_iter->xid <= xid_rep) {
+            free(list_iter->buf);
+            iter->second.erase(list_iter);
+            list_iter = iter->second.begin();
+            continue;
+        }
+        ++list_iter;
+    }
+    printf("DELETED!\n");
+    if (iter->second.size()) {
+        unsigned int min_xid = iter->second.begin()->xid;
+        for (list_iter=iter->second.begin(); list_iter!=iter->second.end(); ++list_iter) {
+            printf("%u\n", list_iter->xid);
+            if (list_iter->xid < min_xid) {
+                min_xid = list_iter->xid;
+            }
+            if (xid == list_iter->xid) {
+                if (list_iter->cb_present) {
+                    *b = list_iter->buf;
+                    *sz = list_iter->sz;
+                    return DONE;
+                } else {
+                    return INPROGRESS;
+                }
+            }
+        }
+        if (xid <= min_xid) {
+            printf("orgotten\n");
+            return FORGOTTEN;
+        }
+    }
+
+    printf("NEW!\n");
+    //new reply
+    reply_t reply(xid);
+    reply.cb_present = false;
+    //add reply to list
+    reply_window_[clt_nonce].push_back(reply);
+
         // You fill this in for Lab 2.
 	return NEW;
 }
@@ -677,6 +725,31 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
         // You fill this in for Lab 2.
+    std::map<unsigned int, std::list<reply_t> >::iterator iter;
+    std::list<reply_t>::iterator list_iter;
+
+    iter = reply_window_.find(clt_nonce);
+    if (reply_window_.end() == iter) {
+        //new reply_list
+        std::list<reply_t> reply_list;
+        reply_list.clear();
+        reply_window_[clt_nonce] = reply_list;
+    }
+    //new reply
+    for (list_iter=reply_window_[clt_nonce].begin(); list_iter!=reply_window_[clt_nonce].end(); ++list_iter) {
+        if (list_iter->xid == xid) {
+            list_iter->buf = b;
+            list_iter->sz = sz;
+            list_iter->cb_present = true;
+            return;
+        }
+    }
+    reply_t reply(xid);
+    reply.buf = b;
+    reply.sz = sz;
+    reply.cb_present = true;
+    //add reply to list
+    reply_window_[clt_nonce].push_back(reply);
 }
 
 void

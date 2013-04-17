@@ -7,10 +7,13 @@
 #include <vector>
 #include <map>
 #include <fcntl.h>
+#include "lock_client.h"
 
 #define YFS_SET_ATTR_SIZE  0x1
 class yfs_client {
   extent_client *ec;
+  lock_client *lc;
+
  public:
 
   typedef unsigned long long inum;

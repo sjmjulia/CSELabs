@@ -1,6 +1,7 @@
 // yfs client.  implements FS operations using extent and lock server
 #include "yfs_client.h"
 #include "extent_client.h"
+#include "lock_client.h"
 #include <sstream>
 #include <iostream>
 #include <stdio.h>
@@ -17,6 +18,7 @@
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
   ec = new extent_client(extent_dst);
+  lc = new lock_client(lock_dst);
     //filling begin
     char buf[BSIZE];
     memset(buf, 0, BSIZE);
@@ -28,16 +30,22 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     //block-bitmap
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET) = 1;
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (1 >> 3)) |= 1 << (1 & 0x7);
+    lc->acquire(0);
     ec->put(0, buf);
+    lc->release(0);
     /////////////////////BLOCK-BITMAP from 10 ~ 200
     memset(buf, 0, BSIZE);
+    lc->acquire(BLOCK_BITMAP_END_BLOCK);
     ec->put(BLOCK_BITMAP_END_BLOCK, buf);
+    lc->release(BLOCK_BITMAP_END_BLOCK);
     *(buf) = 1;
     *(buf + (1 >> 3)) |= 1 << (1 & 0x7);
     for (int i=BLOCK_BITMAP_BEGIN_BLOCK; i<=BLOCK_BITMAP_END_BLOCK; ++i) {
         *(buf + (i >> 3)) |= 1 << (i & 0x7);
     }
+    lc->acquire(BLOCK_BITMAP_BEGIN_BLOCK);
     ec->put(BLOCK_BITMAP_BEGIN_BLOCK, buf);
+    lc->release(BLOCK_BITMAP_BEGIN_BLOCK);
 
     // root block
     memset(buf, 0, BSIZE);
@@ -46,7 +54,9 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     ((inode*)buf)->atime = 0;
     ((inode*)buf)->mtime = 0;
     ((inode*)buf)->ctime = 0;
+    lc->acquire(1);
     ec->put(1, buf);
+    lc->release(1);
     //filling end
 }
 
@@ -74,11 +84,17 @@ yfs_client::isfile(inum inum)
   //return false;
     //filling begin
     char buf[BSIZE];
+    bool ret = false;
+    lc->acquire(inum);
     if (OK != get(inum, buf)) {
-        return false;
+        ret = false;
+        goto over;
     }
-    return 1==M_INODE_PTR(buf)->mode;
+    ret = (1==M_INODE_PTR(buf)->mode);
     //filling end
+over:
+    lc->release(inum);
+    return ret;
 }
 
 bool
@@ -86,10 +102,16 @@ yfs_client::isdir(inum inum)
 {
     //filling begin
     char buf[BSIZE];
+    bool ret = false;
+    lc->acquire(inum);
     if (OK != get(inum, buf)) {
-        return false;
+        ret = false;
+        goto over;
     }
-    return 0==M_INODE_PTR(buf)->mode;
+    ret = (0==M_INODE_PTR(buf)->mode);
+over:
+    lc->release(inum);
+    return ret;
     //filling begin
   return ! isfile(inum);
 }
@@ -104,19 +126,25 @@ yfs_client::getfile(inum inum, fileinfo &fin)
   //fin.size = 0;
     //filling begin
     char buf[BSIZE];
+    lc->acquire(inum);
     int ret = get(inum, buf);
     if (NOENT == ret) {
-        return NOENT;
+        ret = NOENT;
+        goto over;
     }
     if (OK != ret) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
     fin.atime = M_INODE_PTR(buf)->atime;
     fin.mtime = M_INODE_PTR(buf)->mtime;
     fin.ctime = M_INODE_PTR(buf)->ctime;
     fin.size = M_INODE_PTR(buf)->size;
     //filling end
-  return OK;
+    ret = OK;
+over:
+    lc->release(inum);
+    return ret;
 }
 
 int
@@ -128,18 +156,23 @@ yfs_client::getdir(inum inum, dirinfo &din)
   //din.ctime = 0;
     //filling begin
     char buf[BSIZE];
+    lc->acquire(inum);
     int ret = get(inum, buf);
     if (NOENT == ret) {
-        return NOENT;
+        goto over;
     }
     if (OK != ret) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
     din.atime = M_INODE_PTR(buf)->atime;
     din.mtime = M_INODE_PTR(buf)->mtime;
     din.ctime = M_INODE_PTR(buf)->ctime;
     //filling end
-  return OK;
+    ret = OK;
+over:
+    lc->release(inum);
+    return ret;
 }
 
 
@@ -244,7 +277,8 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     char tmp_buf[BSIZE];
 
     inum tmp = 0;
-    get(parent, buf);
+    lc->acquire(parent);                                            //+
+    //get(parent, buf);
     M_INODE_PTR(buf)->ctime = M_INODE_PTR(buf)->mtime = time(0);
     if (OK != put(parent, buf, 0)) {
         return IOERR;
