@@ -697,7 +697,7 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
             }
         }
         if (xid <= min_xid) {
-            printf("orgotten\n");
+            printf("forgotten\n");
             return FORGOTTEN;
         }
     }
