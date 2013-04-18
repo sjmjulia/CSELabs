@@ -34,7 +34,6 @@ lock_server::acquire(int clt, lock_protocol::lockid_t lid, int &r)
     while (1) {
         pthread_mutex_lock(&mutex);
         if (!lock_status[lid]) {
-            printf("locked \t%d\n", lid);
             lock_status[lid] = true;
             lock_times[lid]++;
             pthread_mutex_unlock(&mutex);
@@ -56,7 +55,6 @@ lock_server::release(int clt, lock_protocol::lockid_t lid, int &r)
     if (!lock_status[lid]) {
         ret = lock_protocol::NOENT;
     }
-    printf("unlocked \t%d\n", lid);
     lock_status[lid] = false;
     pthread_mutex_unlock(&mutex);
   

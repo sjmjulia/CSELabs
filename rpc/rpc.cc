@@ -679,7 +679,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
         }
         ++list_iter;
     }
-    printf("DELETED!\n");
     if (iter->second.size()) {
         unsigned int min_xid = iter->second.begin()->xid;
         for (list_iter=iter->second.begin(); list_iter!=iter->second.end(); ++list_iter) {
@@ -703,7 +702,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
         }
     }
 
-    printf("NEW!\n");
     //new reply
     reply_t reply(xid);
     reply.cb_present = false;

@@ -6,6 +6,7 @@
 #include <string>
 #include <map>
 #include "extent_protocol.h"
+#include "extent_client.h"
 
 class extent_server {
 

@@ -20,17 +20,16 @@ extent_client::extent_client(std::string dst)
   if (cl->bind() != 0) {
     printf("extent_client: bind failed\n");
   }
-    //filling begin
+    /*
+     * written in lab1
     umask(0000);
     FILE *f;
     while (1) {
-        //fd = open("disk", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG);
         f = fopen("disk", "wb+");
         if (f) break;
     }
-    //close(fd);
     fclose(f);
-    //filling end
+    */
 }
 // a demo to show how to use RPC
 extent_protocol::status
@@ -46,35 +45,38 @@ extent_client::getattr(extent_protocol::extentid_t eid,
 extent_protocol::status
 extent_client::get(extent_protocol::extentid_t eid, char* buf)
 {
+  extent_protocol::status ret = extent_protocol::OK;
+  std::string b;
+  b = "";
+  ret = cl->call(extent_protocol::get, eid, b);
+  memcpy(buf, b.data(), BSIZE);
+  return ret;
+    /*
+     * written in lab1
     extent_protocol::status ret = extent_protocol::OK;
-    //fill this for lab1
-    //filling begin
     while (-1 == (fd = open("disk", O_RDWR | O_CREAT)));
     size_t cnt = 0;
-    //lseek(fd, eid * BSIZE, SEEK_SET);
-
-    /*
-    if (BSIZE != (cnt = read(fd, buf, BSIZE))) {
-        ret = extent_protocol::IOERR;
-    }
-    */
     while (BSIZE != cnt) {
         lseek(fd, eid * BSIZE, SEEK_SET);
         cnt = read(fd, buf, BSIZE);
     }
-
     close(fd);
-    //filling end
     return ret;
+    */
 }
 
 
 extent_protocol::status
 extent_client::put(extent_protocol::extentid_t eid, char* buf)
 {
+  extent_protocol::status ret = extent_protocol::OK;
+  std::string b(buf, BSIZE);
+  int a;
+  ret = cl->call(extent_protocol::put, eid, b, a);
+  return ret;
+    /*
+     * written in lab1
     extent_protocol::status ret = extent_protocol::OK;
-    //fill this for lab1
-    //filling begin
     while (-1 == (fd = open("disk", O_RDWR | O_CREAT)));
     size_t cnt = 0;
     lseek(fd, eid * BSIZE, SEEK_SET);
@@ -85,10 +87,9 @@ extent_client::put(extent_protocol::extentid_t eid, char* buf)
     if (0 == cnt) {
         ret = extent_protocol::NOENT;
     }
-
     close(fd);
-    //filling end
     return ret;
+    */
 }
 
 extent_protocol::status
