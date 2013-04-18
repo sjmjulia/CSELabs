@@ -30,22 +30,16 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     //block-bitmap
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET) = 1;
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (1 >> 3)) |= 1 << (1 & 0x7);
-    lc->acquire(0);
     ec->put(0, buf);
-    lc->release(0);
     /////////////////////BLOCK-BITMAP from 10 ~ 200
     memset(buf, 0, BSIZE);
-    lc->acquire(BLOCK_BITMAP_END_BLOCK);
     ec->put(BLOCK_BITMAP_END_BLOCK, buf);
-    lc->release(BLOCK_BITMAP_END_BLOCK);
     *(buf) = 1;
     *(buf + (1 >> 3)) |= 1 << (1 & 0x7);
     for (int i=BLOCK_BITMAP_BEGIN_BLOCK; i<=BLOCK_BITMAP_END_BLOCK; ++i) {
         *(buf + (i >> 3)) |= 1 << (i & 0x7);
     }
-    lc->acquire(BLOCK_BITMAP_BEGIN_BLOCK);
     ec->put(BLOCK_BITMAP_BEGIN_BLOCK, buf);
-    lc->release(BLOCK_BITMAP_BEGIN_BLOCK);
 
     // root block
     memset(buf, 0, BSIZE);
@@ -54,9 +48,7 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     ((inode*)buf)->atime = 0;
     ((inode*)buf)->mtime = 0;
     ((inode*)buf)->ctime = 0;
-    lc->acquire(1);
     ec->put(1, buf);
-    lc->release(1);
     //filling end
 }
 
@@ -197,42 +189,41 @@ int yfs_client::get(inum ino, char *buf) {
 
 int yfs_client::put(inum &ino, char *buf, bool add) {
     if (add) {
-        //char super_block_buf[BSIZE];
-        //get(0, super_block_buf);
-        //inum tmp = 0;
-        //for (tmp=0; tmp<3500; ++tmp){
-        //    if (!((*(super_block_buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (tmp >> 3)) >> (tmp & 0x7)) & 1)) break;
-        //}
-        //if (3500 == tmp) return IOERR;
-        ///////////////////ret checking ?
-        //ec->put(tmp, buf);
-        //*(super_block_buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (tmp >> 3)) |= 1 << (tmp & 0x7);
-        //inum t = 0;
-        //if (OK != put(t, super_block_buf, 0)) {
-        //    return IOERR;
-        //}
-        //ino = tmp;
+        int ret = OK;
         char bitmap_block_buf[BSIZE];
+        inum last_bitmap_block = -1;
         for (inum i=0; ; ++i) {
             inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + i / BITMAP_PER_BLOCK;
+            if (bitmap_block != last_bitmap_block) {
+                lc->acquire(bitmap_block);
+                last_bitmap_block = bitmap_block;
+            }
             inum bitmap = i % BITMAP_PER_BLOCK;
             get(bitmap_block, bitmap_block_buf);
             if (!((*(bitmap_block_buf + (bitmap >> 3)) >> (bitmap & 0x7)) & 1)) {
-                if (OK != ec->put(i, buf)) return IOERR;
+                if (OK != ec->put(i, buf)) {
+                    ret = IOERR;
+                    goto over;
+                }
                 *(bitmap_block_buf + (bitmap >> 3)) |= 1 << (bitmap & 0x7);
-                if (OK != ec->put(bitmap_block, bitmap_block_buf)) return IOERR;
+                if (OK != ec->put(bitmap_block, bitmap_block_buf)) {
+                    ret = IOERR;
+                    goto over;
+                }
                 ino = i;
-                return OK;
+                ret = OK;
+                goto over;
             }
         }
-        return IOERR;
+        ret = IOERR;
+over:
+        while (last_bitmap_block >= BLOCK_BITMAP_BEGIN_BLOCK) {
+            lc->release(last_bitmap_block);
+            --last_bitmap_block;
+        }
+        return ret;
 
     } else {
-        //char super_block_buf[BSIZE];
-        //get(0, super_block_buf);
-        //if (!((*(super_block_buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (ino >> 3)) >> (ino& 0x7)) & 1)) {
-        //    return NOENT;
-        //}
         inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
         inum bitmap = ino % BITMAP_PER_BLOCK;
         char bitmap_block_buf[BSIZE];
@@ -246,22 +237,21 @@ int yfs_client::put(inum &ino, char *buf, bool add) {
 }
 
 int yfs_client::remove(inum ino) {
-    //char super_block_buf[BSIZE];
-    //get(0, super_block_buf);
-    //*(super_block_buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (ino >> 3)) &= ~(1 << (ino & 0x7));
-    //inum t = 0;
-    //if (OK != put(t, super_block_buf, 0)) {
-    //   return IOERR;
-    //}
     inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
+    lc->acquire(bitmap_block);
     inum bitmap = ino % BITMAP_PER_BLOCK;
     char bitmap_block_buf[BSIZE];
     get(bitmap_block, bitmap_block_buf);
     *(bitmap_block_buf + (bitmap >> 3)) &= ~(1 << (bitmap & 0x7));
+    int ret = IOERR;
     if (OK != put(bitmap_block, bitmap_block_buf, 0)) {
-       return IOERR;
+       ret = IOERR;
+       goto over;
     }
-    return OK;
+    ret = OK;
+over:
+    lc->release(bitmap_block);
+    return ret;
 }
 //filling end
 
@@ -270,36 +260,51 @@ int
 yfs_client::create(inum parent, const std::string name,inum &ino)
 {
   
-  int r = IOERR;
- release:
-    //filling begin
+    int ret = OK;
     char buf[BSIZE];
     char tmp_buf[BSIZE];
-
     inum tmp = 0;
+    inum target = parent;
+
     lc->acquire(parent);                                            //+
-    //get(parent, buf);
+    get(parent, buf);
     M_INODE_PTR(buf)->ctime = M_INODE_PTR(buf)->mtime = time(0);
     if (OK != put(parent, buf, 0)) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
 
-    inum target = parent;
     //search new blank entry
     while (M_INODE_PTR(buf)->size >= INODE_DIR_ENTRY_NUM) {
-        /////////////////check duplicate ?
+        //check duplicated
+        for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
+            if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
+                ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
+                goto over;
+            }
+        }
+        //proess
         if (M_INODE_PTR(buf)->next_inode) {
             target = M_INODE_PTR(buf)->next_inode;
             get(target, buf);
         } else {
             memset(tmp_buf, 0, BSIZE);
             if (OK != put(tmp, tmp_buf, 1)) {
-                return IOERR;
+                ret = IOERR;
+                goto over;
             }
             M_INODE_PTR(buf)->next_inode = tmp;
             if (OK != put(target, buf, 0)) {
-                return IOERR;
+                ret = IOERR;
+                goto over;
             }
+        }
+    }
+    //check duplicated
+    for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
+        if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
+            ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
+            goto over;
         }
     }
     //new file block
@@ -309,63 +314,69 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     M_INODE_PTR(tmp_buf)->mtime = time(0);
     M_INODE_PTR(tmp_buf)->ctime = time(0);
     if (OK != put(tmp, tmp_buf, 1)) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
     //fill in entry
     strcpy(M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].name, name.c_str());
     M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].inum = tmp;
     M_INODE_PTR(buf)->size++;
     if (OK != put(target, buf, 0)) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
     ino = tmp;
-    return OK;
-    return OK;
+    ret = OK;
 
-    //filling end
-  return r;
+over:
+    lc->release(parent);                                    //-
+    return ret;
 }
 
 yfs_client::inum
 yfs_client::lookup(inum parent, const std::string name)
 {
-  inum r = 0;
-release:
-    //filling begin
+    inum ret = 0;
     char buf[BSIZE];
+
+    lc->acquire(parent);                                    //+
 
     get(parent, buf);
     M_INODE_PTR(buf)->atime = time(0);
     if (OK != put(parent, buf, 0)) {
-        return IOERR;
+        ////////trick here.
+        ret = IOERR;
+        goto over;
     }
     //search new blank entry
     while (1){
         for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
             if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
-                return M_INODE_PTR(buf)->dir_entries[i].inum;
+                ret = (M_INODE_PTR(buf)->dir_entries[i].inum);
+                goto over;
             }
         }
         if (!M_INODE_PTR(buf)->next_inode) break;
         get(M_INODE_PTR(buf)->next_inode, buf);
     }
 
-    //filling end
-  return r;
+over:
+    lc->release(parent);
+    return ret;
 }
 
 int yfs_client::readdir(inum ino,std::map<inum,std::string> &items)
 {
-  int r = IOERR;
-release:
-    //filling begin
+    int ret = IOERR;
     char buf[BSIZE];
 
+    lc->acquire(ino);                                       //+
     items.clear();
     get(ino, buf);
     M_INODE_PTR(buf)->atime = time(0);
     if (OK != put(ino, buf, 0)) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
     //search new blank entry
     while (1){
@@ -376,18 +387,17 @@ release:
         if (!M_INODE_PTR(buf)->next_inode) break;
         get(M_INODE_PTR(buf)->next_inode, buf);
     }
-    return OK;
-
-    //filling end
-  return r;
+    ret = OK;
+over:
+    lc->release(ino);                                       //-
+    return ret;
 }
 
 int yfs_client::setattr(inum ino,int to_set,const fileinfo &info)
 {
-  //int r = IOERR;
-  //return r;
-    //filling begin
+    int ret = OK;
     char buf[BSIZE];
+    lc->acquire(ino);                                       //+
     get(ino, buf);
     M_INODE_PTR(buf)->atime = info.atime;
     M_INODE_PTR(buf)->mtime = info.mtime;
@@ -399,40 +409,31 @@ int yfs_client::setattr(inum ino,int to_set,const fileinfo &info)
         M_INODE_PTR(buf)->size = info.size;
     }
     if (OK != put(ino, buf, 0)) {
-        return IOERR;
+        ret = IOERR;
+        goto over;
     }
-    //filling end
-  return OK;
+over:
+    lc->release(ino);                                       //-
+    return ret;
 }
 
 int yfs_client::read(inum ino,size_t size,off_t off,std::string &buf)
 {
-  int r = IOERR;
-  release:
-    //filling begin
     return inner_read(ino, size, off, buf);
-    //filling end
-  return r;
 }
 
 int yfs_client::write(inum ino,const char* buf,size_t &size,off_t off)
 {
-  int r = IOERR;
-  release:
-    //filling begin
     return inner_write(ino, buf, size, off);
-    //filling end
-  return r;
 }
 
 int
 yfs_client::mkdir(inum parent, const std::string name,inum &ino)
 {
-  int r = IOERR;
- release:
-    //filling begin
     char buf[BSIZE];
     char tmp_buf[BSIZE];
+
+    lc->acquire(parent);
 
     inum tmp = 0;
     get(parent, buf);
@@ -466,22 +467,21 @@ yfs_client::mkdir(inum parent, const std::string name,inum &ino)
     M_INODE_PTR(buf)->size++;
     put(target, buf, 0);
     ino = tmp;
-    return OK;
 
-    //filling end
-  return r;
+    lc->release(parent);
+    return OK;
 }
 
 int
 yfs_client::unlink(inum parent, const std::string name)
 {
-  int r = IOERR;
- release:
-    //filling begin
+    int ret = OK;
 
     char buf[BSIZE];
     inum unlink_inum = 0;
     inum buf_inum = parent;
+    
+    lc->acquire(parent);
 
     get(parent, buf);
     M_INODE_PTR(buf)->mtime = time(0);
@@ -501,15 +501,12 @@ yfs_client::unlink(inum parent, const std::string name)
         buf_inum = M_INODE_PTR(buf)->next_inode;
         get(buf_inum, buf);
     }
-    if (!found) return NOENT;
+    if (!found) {
+        printf("unlink: not found!\n");
+        ret = NOENT;
+        goto over;
+    }
     unlink_inum = M_INODE_PTR(buf)->dir_entries[index].inum;
-    /*
-    strcpy(M_INODE_PTR(buf)->dir_entries[index].name,
-            M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size-1].name);
-    M_INODE_PTR(buf)->dir_entries[index].inum = 
-        M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size-1].inum;
-    size--;
-    */
     char new_buf[BSIZE];
     memset(new_buf, 0, BSIZE);
     M_INODE_PTR(new_buf)->mode = M_INODE_PTR(buf)->mode;
@@ -527,9 +524,10 @@ yfs_client::unlink(inum parent, const std::string name)
     put(buf_inum, new_buf, 0);
 
     recursive_unlink(unlink_inum);
-    return OK;
-    //filling end
-  return r;
+over:
+    lc->release(parent);
+    printf("sfsdddddddddddddddddddddddddddddddddddddddddddddddddddddddd %d\n", ret);
+    return ret;
 }
 
 //filling begin
