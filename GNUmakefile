@@ -1,4 +1,4 @@
-LAB=2
+LAB=3
 SOL=0
 RPC=./rpc
 LAB1GE=$(shell expr $(LAB) \>\= 1)
@@ -36,7 +36,7 @@ CXX = g++
 lab:  lab$(LAB)
 lab1: yfs_client
 lab2: rpc/rpctest lock_server lock_tester lock_demo yfs_client extent_server test-lab-2-a test-lab-2-b
-lab3: yfs_client extent_server lock_server test-lab-2-a test-lab-2-b
+lab3: rpc/rpctest yfs_client extent_server lock_server lock_tester lock_demo test-lab-2-a test-lab-2-b
 lab4: yfs_client extent_server lock_server lock_tester test-lab-2-a\
 	 test-lab-2-b
 lab5: yfs_client extent_server lock_server test-lab-2-a test-lab-2-b
@@ -66,7 +66,7 @@ lock_demo=lock_demo.cc lock_client.cc
 lock_demo : $(patsubst %.cc,%.o,$(lock_demo)) rpc/librpc.a
 
 lock_tester=lock_tester.cc lock_client.cc
-ifeq ($(LAB4GE),1)
+ifeq ($(LAB3GE),1)
   lock_tester += lock_client_cache.cc
 endif
 ifeq ($(LAB7GE),1)
@@ -75,7 +75,7 @@ endif
 lock_tester : $(patsubst %.cc,%.o,$(lock_tester)) rpc/librpc.a
 
 lock_server=lock_server.cc lock_smain.cc
-ifeq ($(LAB4GE),1)
+ifeq ($(LAB3GE),1)
   lock_server+=lock_server_cache.cc handle.cc
 endif
 ifeq ($(LAB6GE),1)
@@ -94,7 +94,7 @@ endif
 ifeq ($(LAB7GE),1)
   yfs_client += rsm_client.cc lock_client_cache_rsm.cc
 endif
-ifeq ($(LAB4GE),1)
+ifeq ($(LAB3GE),1)
   yfs_client += lock_client_cache.cc
 endif
 yfs_client : $(patsubst %.cc,%.o,$(yfs_client))  rpc/librpc.a
@@ -103,10 +103,10 @@ extent_server=extent_server.cc extent_smain.cc
 extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 
 test-lab-2-a=test-lab-2-a.c
-test-lab-2-a:  $(patsubst %.c,%.o,$(test_lab_4-b)) rpc/librpc.a
+test-lab-2-a:  $(patsubst %.c,%.o,$(test_lab_2-a)) rpc/librpc.a
 
 test-lab-2-b=test-lab-2-b.c
-test-lab-4-c:  $(patsubst %.c,%.o,$(test_lab_4-c)) rpc/librpc.a
+test-lab-2-b:  $(patsubst %.c,%.o,$(test_lab_2-b)) rpc/librpc.a
 
 rsm_tester=rsm_tester.cc rsmtest_client.cc
 rsm_tester:  $(patsubst %.cc,%.o,$(rsm_tester)) rpc/librpc.a
