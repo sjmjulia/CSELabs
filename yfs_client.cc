@@ -419,12 +419,18 @@ over:
 
 int yfs_client::read(inum ino,size_t size,off_t off,std::string &buf)
 {
-    return inner_read(ino, size, off, buf);
+    lc->acquire(ino);
+    int ret = inner_read(ino, size, off, buf);
+    lc->release(ino);
+    return ret;
 }
 
 int yfs_client::write(inum ino,const char* buf,size_t &size,off_t off)
 {
-    return inner_write(ino, buf, size, off);
+    lc->acquire(ino);
+    int ret = inner_write(ino, buf, size, off);
+    lc->release(ino);
+    return ret;
 }
 
 int

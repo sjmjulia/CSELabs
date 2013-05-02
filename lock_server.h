@@ -19,6 +19,7 @@ class lock_server {
     std::map<lid_t, bool> lock_status;
     std::map<lid_t, int> lock_times;
     pthread_mutex_t mutex;
+    pthread_cond_t cv;
 
  public:
   lock_server();

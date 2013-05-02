@@ -1,0 +1,9 @@
+Write and read one file: OK
+Write and read a second file: OK
+Overwrite an existing file: OK
+Append to an existing file: OK
+Write into the middle of an existing file: OK
+Write beyond the end of an existing file: OK
+Check that one cannot open non-existant file: OK
+Check directory listing: OK
+Read files via second server: 

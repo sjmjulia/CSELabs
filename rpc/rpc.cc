@@ -319,6 +319,7 @@ rpcc::call1(unsigned int proc, marshall &req, unmarshall &rep,
 		ch->decref();
 
 	// destruction of req automatically frees its buffer
+    printf("pthread %d %d ca.done %d, ca.intret %d\n", pthread_self(), clt_nonce_, ca.done, ca.intret);
 	return (ca.done? ca.intret : rpc_const::timeout_failure);
 }
 
@@ -662,42 +663,92 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
 
+    printf("%d  %d    %d       %d\n", pthread_self(), clt_nonce,xid, xid_rep);
     std::map<unsigned int, std::list<reply_t> >::iterator iter;
+    std::list<reply_t>::iterator it;
+    std::list<reply_t> &replys = reply_window_[clt_nonce];
+    if (xid_rep > xid_rep_window_[clt_nonce]) {
+        xid_rep_window_[clt_nonce] = xid_rep;
+    }
+    xid_rep = xid_rep_window_[clt_nonce];
+    if (xid <= xid_rep) {
+        return FORGOTTEN;
+    }
+    for (it=replys.begin(); it!=replys.end(); ) {
+        if (it->xid <= xid_rep) {
+            free(it->buf);
+            it = replys.erase(it);
+            continue;
+        }
+        if (it->xid == xid) {
+            if (it->cb_present) {
+                *b = it->buf;
+                *sz = it->sz;
+                return DONE;
+            } else {
+                return INPROGRESS;
+            }
+        } 
+        ++it;
+    }
+
+    reply_t new_reply(xid);
+    new_reply.cb_present = false;
+    //add reply to list
+    replys.push_back(new_reply);
+	return NEW;
+    //over here
+
+
     iter = reply_window_.find(clt_nonce);
+    /*
     if (reply_window_.end() == iter) {
         //blabla
         printf("no here\n");
         return NEW;
     }
-    std::list<reply_t>::iterator list_iter = iter->second.begin();
-    while (list_iter != iter->second.end()) {
-        if (list_iter->xid <= xid_rep) {
-            free(list_iter->buf);
-            iter->second.erase(list_iter);
-            list_iter = iter->second.begin();
+    */
+    it = iter->second.begin();
+    for (it=iter->second.begin(); it!=iter->second.end(); ++it) {
+        printf("%d ", it->xid);
+    }
+    printf("\n");
+    it = iter->second.begin();
+    while (it != iter->second.end()) {
+        if (it->xid <= xid_rep) {
+            printf("delete %d for %d\n", it->xid, xid_rep);
+            free(it->buf);
+            it = iter->second.erase(it);
             continue;
         }
-        ++list_iter;
+        ++it;
+    }
+    for (it=iter->second.begin(); it!=iter->second.end(); ++it) {
+        printf("%d ", it->xid);
     }
     if (iter->second.size()) {
         unsigned int min_xid = iter->second.begin()->xid;
-        for (list_iter=iter->second.begin(); list_iter!=iter->second.end(); ++list_iter) {
-            printf("%u\n", list_iter->xid);
-            if (list_iter->xid < min_xid) {
-                min_xid = list_iter->xid;
+        for (it=iter->second.begin(); it!=iter->second.end(); ++it) {
+            if (it->xid < min_xid) {
+                min_xid = it->xid;
             }
-            if (xid == list_iter->xid) {
-                if (list_iter->cb_present) {
-                    *b = list_iter->buf;
-                    *sz = list_iter->sz;
+            //printf("%u\n", list_iter->xid);
+            if (xid == it->xid) {
+                if (it->cb_present) {
+                    *b = it->buf;
+                    *sz = it->sz;
+                    printf("return DONE of %s\n", std::string(*b, *sz).c_str());
                     return DONE;
                 } else {
+                    printf("INPRO\n");
                     return INPROGRESS;
                 }
             }
         }
-        if (xid <= min_xid) {
-            printf("forgotten\n");
+        printf("xid is %d    min_xid is %d\n", xid, min_xid);
+        //if (xid < min_xid) {
+        if (xid <= xid_rep) {
+            printf("pre FORG\n");
             return FORGOTTEN;
         }
     }
@@ -709,6 +760,7 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
     reply_window_[clt_nonce].push_back(reply);
 
         // You fill this in for Lab 2.
+    printf("NEW\n");
 	return NEW;
 }
 
@@ -723,31 +775,39 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
         // You fill this in for Lab 2.
-    std::map<unsigned int, std::list<reply_t> >::iterator iter;
-    std::list<reply_t>::iterator list_iter;
+    printf("add_reply: ");
+    //std::map<unsigned int, std::list<reply_t> >::iterator iter;
+    std::list<reply_t>::iterator it;
 
+    /*
     iter = reply_window_.find(clt_nonce);
     if (reply_window_.end() == iter) {
+        printf("new_reply\n");
         //new reply_list
         std::list<reply_t> reply_list;
         reply_list.clear();
         reply_window_[clt_nonce] = reply_list;
     }
+    */
     //new reply
-    for (list_iter=reply_window_[clt_nonce].begin(); list_iter!=reply_window_[clt_nonce].end(); ++list_iter) {
-        if (list_iter->xid == xid) {
-            list_iter->buf = b;
-            list_iter->sz = sz;
-            list_iter->cb_present = true;
+    for (it=reply_window_[clt_nonce].begin(); it!=reply_window_[clt_nonce].end(); ++it) {
+        if (it->xid == xid) {
+            printf("found_reply\n");
+            it->buf = b;
+            it->sz = sz;
+            it->cb_present = true;
             return;
         }
     }
+    /*
+    printf("new_reply\n");
     reply_t reply(xid);
     reply.buf = b;
     reply.sz = sz;
     reply.cb_present = true;
     //add reply to list
     reply_window_[clt_nonce].push_back(reply);
+    */
 }
 
 void
