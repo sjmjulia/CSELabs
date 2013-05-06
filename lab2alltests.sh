@@ -49,40 +49,26 @@ zo=0
 #    echo "--------------fs1-------------------------------PASS------------ $j"
 #done
 
-#z=0
-#while [ $z -ne $end ]; do
-#    let "z=z+1"
-#    export RPC_LOSSY=5
-#    ./start.sh > o.o
-#    ./test-lab-2-a ./yfs1 ./yfs2 > o.o
-#    if [ $? -ne $zo ]; then
-#        echo "lab2a wrong!"
-#        exit 1
-#    fi
-#    ./test-lab-2-b ./yfs1 ./yfs2 > o.o
-#    if [ $? -ne $zo ]; then
-#        echo "lab2b wrong!"
-#        exit 1
-#    fi
-#    ./stop.sh > o.o
-#    ./stop.sh > o.o
-#    ./stop.sh > o.o
-#    echo "--------------fs2-------------------------------PASS------------ $z"
-#done
-#echo "PASS fs!"
-k=0
-while [ $k -ne $end ]; do
-    let "k=k+1"
+z=0
+while [ $z -ne $end ]; do
+    let "z=z+1"
     export RPC_LOSSY=5
-    killall lock_server
-    ./lock_server 3772 > server.log &
-    ./lock_tester 3772 > tester.log
+    ./start.sh > o.o
+    ./test-lab-2-a ./yfs1 ./yfs2 > o.o
     if [ $? -ne $zo ]; then
-        echo "wrong!"
+        echo "lab2a wrong!"
         exit 1
     fi
-    killall lock_server
-    echo "--------------teser-------------------------------PASS------------ $k"
+    ./test-lab-2-b ./yfs1 ./yfs2 > o.o
+    if [ $? -ne $zo ]; then
+        echo "lab2b wrong!"
+        exit 1
+    fi
+    ./stop.sh > o.o
+    ./stop.sh > o.o
+    ./stop.sh > o.o
+    echo "--------------fs2-------------------------------PASS------------ $z"
 done
+echo "PASS fs!"
 echo "PASS all!"
 exit 0

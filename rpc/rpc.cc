@@ -319,7 +319,6 @@ rpcc::call1(unsigned int proc, marshall &req, unmarshall &rep,
 		ch->decref();
 
 	// destruction of req automatically frees its buffer
-    printf("pthread %d %d ca.done %d, ca.intret %d\n", pthread_self(), clt_nonce_, ca.done, ca.intret);
 	return (ca.done? ca.intret : rpc_const::timeout_failure);
 }
 
@@ -663,7 +662,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
 
-    printf("%d  %d    %d       %d\n", pthread_self(), clt_nonce,xid, xid_rep);
     std::map<unsigned int, std::list<reply_t> >::iterator iter;
     std::list<reply_t>::iterator it;
     std::list<reply_t> &replys = reply_window_[clt_nonce];
@@ -775,7 +773,6 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
         // You fill this in for Lab 2.
-    printf("add_reply: ");
     //std::map<unsigned int, std::list<reply_t> >::iterator iter;
     std::list<reply_t>::iterator it;
 
@@ -792,7 +789,6 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
     //new reply
     for (it=reply_window_[clt_nonce].begin(); it!=reply_window_[clt_nonce].end(); ++it) {
         if (it->xid == xid) {
-            printf("found_reply\n");
             it->buf = b;
             it->sz = sz;
             it->cb_present = true;

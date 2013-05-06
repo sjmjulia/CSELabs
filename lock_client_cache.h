@@ -27,10 +27,11 @@ class lock_client_cache : public lock_client {
   int rlock_port;
   std::string hostname;
   std::string id;
-  enum oostatus { NONE, FREE, LOCKED, ACQUIRING, RELEASING };
+  enum oostatus { NONE, FREE, LOCKED, ACQUIRING, RELEASING, EARLY_REVOKED};
   std::map<int, oostatus> status_map;
   pthread_mutex_t status_map_mutex;
-  std::map<int, pthread_cond_t> status_cv_map;
+  std::map<int, pthread_mutex_t> status_mutex_map;
+  std::map<int, pthread_cond_t> status_cond_map;
  public:
   static int last_port;
   lock_client_cache(std::string xdst, class lock_release_user *l = 0);
