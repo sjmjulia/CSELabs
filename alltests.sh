@@ -1,7 +1,7 @@
 #!/bin/bash
 
 i=0
-end=50
+end=500
 zo=0
 #./stop.sh
 #while [ $i -ne $end ]; do

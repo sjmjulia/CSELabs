@@ -62,7 +62,11 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
   if (lock_owner_map[lid] == id) {
     //he already owns the lock...
     tprintf("acquire => lid %d id %s I already owns the lock\n", lid, id.c_str());
-    goto RET_POINT;
+    ret = lock_protocol::RETRY;
+    pthread_mutex_unlock(&lock_mutex_map[lid]);
+    tprintf("acquire => lid %d id %s returns the mutex\n", lid, id.c_str());
+    cl->call(rlock_protocol::revoke, lid, r);
+    return ret;
   }
 
   //somebody owns the lock
@@ -128,7 +132,7 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
   tprintf("release ==> lid %d id %s returns the thread\n", lid, id.c_str());
   //send retry
   std::set<std::string>::iterator waiter;
-  int cnt = 2;
+  int cnt = 1;
   for (waiter=lock_waiters.begin();
           waiter!=lock_waiters.end();
           ++waiter) {
@@ -140,6 +144,10 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
       tprintf("release ==> lid %d id %s call %s retry rpc\n", lid, id.c_str(), waiter->c_str());
       cl->call(rlock_protocol::retry, lid, rr);
   }
+  if (lock_waiters.size() > 1) {
+      cl->call(rlock_protocol::revoke, lid, rr);
+  }
+      
 //RET_POINT:
   return ret;
 }

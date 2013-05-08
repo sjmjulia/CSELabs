@@ -73,7 +73,7 @@ CHECK_AGAIN:
     pthread_mutex_lock(&status_mutex_map[lid]);
     tprintf("%s >> acquire =====> lock to deal with acquire rpc response\n", id.c_str());
     if (lock_protocol::OK == ret) {
-      if (ACQUIRING == status_map[lid] || NONE == status_map[lid]) {
+      if (ACQUIRING == status_map[lid]) {// || NONE == status_map[lid]) {
         status_map[lid] = FREE;
         tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), ACQUIRING, status_map[lid]);
         //do not need to send signals
@@ -82,9 +82,10 @@ CHECK_AGAIN:
       } else if (EARLY_REVOKED == status_map[lid]) {
         tprintf("%s >> acquire =====> revoke arrives before OK\n", id.c_str());
         status_map[lid] = RELEASING;
-        tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), RELEASING, status_map[lid]);
+        tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), EARLY_REVOKED, status_map[lid]);
         goto RET_POINT;
       }
+      
     }
     goto CHECK_AGAIN;
   case FREE:
@@ -198,6 +199,11 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
 CHECK_AGAIN:
   switch (status_map[lid]) {
   case NONE:
+    status_map[lid] = NONE;
+    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), FREE, status_map[lid]);
+    tprintf("%s >> revoke ===> call release\n", id.c_str());
+    ret = cl->call(lock_protocol::release, lid, id, r);
+    goto RET_POINT;
     goto RET_POINT;
     VERIFY(0);
   case FREE:
@@ -216,9 +222,10 @@ CHECK_AGAIN:
     //  if directly revoke the lock, the acquring thread will die in the acquiring phread_cond_wait
     //  so just give him a chance to acquire again after revoking.
     status_map[lid] = EARLY_REVOKED;
+    //status_map[lid] = RELEASING;
     tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), ACQUIRING, status_map[lid]);
-    tprintf("%s >> revoke ===> call release rpc\n", id.c_str());
-    ret = cl->call(lock_protocol::release, lid, id, r);
+    //tprintf("%s >> revoke ===> call release rpc\n", id.c_str());
+    //ret = cl->call(lock_protocol::release, lid, id, r);
     tprintf("%s >> revoke ===> cond_signal %d\n", id.c_str(), lid);
     pthread_cond_signal(&status_cond_map[lid]);
     goto RET_POINT;
