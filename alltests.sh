@@ -73,7 +73,7 @@ zo=0
 k=0
 while [ $k -ne $end ]; do
     let "k=k+1"
-    export RPC_LOSSY=5
+    export RPC_LOSSY=0
     killall lock_server
     ./lock_server 3772 > server.log &
     ./lock_tester 3772 > tester.log

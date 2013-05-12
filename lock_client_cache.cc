@@ -29,6 +29,9 @@ lock_client_cache::lock_client_cache(std::string xdst,
   rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry_handler);
 
   status_map.clear();
+  revoked_map.clear();
+  retried_map.clear();
+  waiters_num_map.clear();
   status_mutex_map.clear();
   status_cond_map.clear();
 }
@@ -61,7 +64,7 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
   pthread_mutex_unlock(&status_map_mutex);
   //deal with acquire
   pthread_mutex_lock(&status_mutex_map[lid]);
-    tprintf("%s >> acquire =====> status %d\n", id.c_str(), status_map[lid]);
+  tprintf("%s >> acquire =====> status %d\n", id.c_str(), status_map[lid]);
 CHECK_AGAIN:
   switch (status_map[lid]) {
   case NONE:
@@ -76,16 +79,7 @@ CHECK_AGAIN:
       if (ACQUIRING == status_map[lid]) {// || NONE == status_map[lid]) {
         status_map[lid] = FREE;
         tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), ACQUIRING, status_map[lid]);
-        //do not need to send signals
-        //  because this thread will check again.
-      
-      } else if (EARLY_REVOKED == status_map[lid]) {
-        tprintf("%s >> acquire =====> revoke arrives before OK\n", id.c_str());
-        status_map[lid] = RELEASING;
-        tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), EARLY_REVOKED, status_map[lid]);
-        goto RET_POINT;
-      }
-      
+      }      
     }
     goto CHECK_AGAIN;
   case FREE:
@@ -95,27 +89,20 @@ CHECK_AGAIN:
     goto RET_POINT;
   case LOCKED:
     //wait someone release the lock and send signal to me
-    tprintf("%s >> acquire =====> cond wait\n", id.c_str());
-    pthread_cond_wait(&status_cond_map[lid], &status_mutex_map[lid]);
-    tprintf("%s >> acquire =====> wake from cond wait\n", id.c_str());
-    goto CHECK_AGAIN;
   case ACQUIRING:
-    //wait to receive reply from server
-    //  and the handler sends signal to me
-    tprintf("%s >> acquire =====> cond wait\n", id.c_str());
-    pthread_cond_wait(&status_cond_map[lid], &status_mutex_map[lid]);
-    tprintf("%s >> acquire =====> wake from cond wait\n", id.c_str());
-    goto CHECK_AGAIN;
+    //wait to receive reply from server and the handler sends signal to me
+    if (ACQUIRING == status_map[lid] && retried_map[lid]) {
+        status_map[lid] = NONE;
+        retried_map[lid] = false;
+        tprintf("%s >> acquire =====> set status from %d to %d\n", id.c_str(), ACQUIRING, status_map[lid]);
+        goto CHECK_AGAIN;
+    }
   case RELEASING:
     //wait to be granted the lock next time
     tprintf("%s >> acquire =====> cond wait\n", id.c_str());
+    ++waiters_num_map[lid];
     pthread_cond_wait(&status_cond_map[lid], &status_mutex_map[lid]);
-    tprintf("%s >> acquire =====> wake from cond wait\n", id.c_str());
-    goto CHECK_AGAIN;
-  case EARLY_REVOKED:
-    //wait 
-    tprintf("%s >> acquire =====> cond wait\n", id.c_str());
-    pthread_cond_wait(&status_cond_map[lid], &status_mutex_map[lid]);
+    --waiters_num_map[lid];
     tprintf("%s >> acquire =====> wake from cond wait\n", id.c_str());
     goto CHECK_AGAIN;
   default:
@@ -148,10 +135,11 @@ lock_client_cache::release(lock_protocol::lockid_t lid)
   if (status_map.end() == it)
       VERIFY(0);
   pthread_mutex_unlock(&status_map_mutex);
+  //deal with release
   pthread_mutex_lock(&status_mutex_map[lid]);
   tprintf("%s >> release ===> lock\n", id.c_str());
+CHECK_POINT:
   tprintf("%s >> release ===> status %d\n", id.c_str(), status_map[lid]);
-
   switch (status_map[lid]) {
   case NONE:
     VERIFY(0);
@@ -159,25 +147,33 @@ lock_client_cache::release(lock_protocol::lockid_t lid)
     VERIFY(0);
   case LOCKED:
     //release the lock and send signal
-    status_map[lid] = FREE;
-    tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
+    if (revoked_map[lid] && 0 == waiters_num_map[lid]) {
+        status_map[lid] = RELEASING;
+        revoked_map[lid] = false;
+        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
+        tprintf("%s >> release ===> unlock to call release\n", id.c_str());
+        pthread_mutex_unlock(&status_mutex_map[lid]);
+        ret = cl->call(lock_protocol::release, lid, id, r);
+        pthread_mutex_lock(&status_mutex_map[lid]);
+        tprintf("%s >> release ===> lock to deal with release rpc response\n", id.c_str());
+        status_map[lid] = NONE;
+        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), RELEASING, status_map[lid]);
+    } else {
+        status_map[lid] = FREE;
+        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
+    }
     tprintf("%s >> release ===> cond_signal %d\n", id.c_str(), lid);
     pthread_cond_signal(&status_cond_map[lid]);
     goto RET_POINT;
   case ACQUIRING:
     VERIFY(0);
   case RELEASING:
-    //release rpc to server
-    status_map[lid] = NONE;
-    tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), RELEASING, status_map[lid]);
-    pthread_mutex_unlock(&status_mutex_map[lid]);
-    tprintf("%s >> release ===> unlock to call release rpc\n", id.c_str());
-    ret = cl->call(lock_protocol::release, lid, id, r);
-    pthread_mutex_lock(&status_mutex_map[lid]);
-    tprintf("%s >> release ===> lock to deal with release rpc response\n", id.c_str());
-    tprintf("%s >> release ===> cond_signal %d\n", id.c_str(), lid);
-    pthread_cond_signal(&status_cond_map[lid]);
-    goto RET_POINT;
+    tprintf("%s >> release =====> cond wait\n", id.c_str());
+    ++waiters_num_map[lid];
+    pthread_cond_wait(&status_cond_map[lid], &status_mutex_map[lid]);
+    --waiters_num_map[lid];
+    tprintf("%s >> release =====> wake from cond wait\n", id.c_str());
+    goto CHECK_POINT;
   default:
     VERIFY(0);
   }
@@ -196,48 +192,17 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
   int r;
   pthread_mutex_lock(&status_mutex_map[lid]);
   tprintf("%s >> revoke ===> status %d\n", id.c_str(), status_map[lid]);
-CHECK_AGAIN:
-  switch (status_map[lid]) {
-  case NONE:
+  if (FREE == status_map[lid]) {
+    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), status_map[lid], NONE);
     status_map[lid] = NONE;
-    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), FREE, status_map[lid]);
     tprintf("%s >> revoke ===> call release\n", id.c_str());
     ret = cl->call(lock_protocol::release, lid, id, r);
-    goto RET_POINT;
-    goto RET_POINT;
-    VERIFY(0);
-  case FREE:
-    status_map[lid] = NONE;
-    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), FREE, status_map[lid]);
-    tprintf("%s >> revoke ===> call release\n", id.c_str());
-    ret = cl->call(lock_protocol::release, lid, id, r);
-    goto RET_POINT;
-  case LOCKED:
-    //set the status to RELEASING
-    status_map[lid] = RELEASING;
-    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
-    goto RET_POINT;
-  case ACQUIRING:
-    //get the lock from server just now! not even a thread can do anything.
-    //  if directly revoke the lock, the acquring thread will die in the acquiring phread_cond_wait
-    //  so just give him a chance to acquire again after revoking.
-    status_map[lid] = EARLY_REVOKED;
-    //status_map[lid] = RELEASING;
-    tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), ACQUIRING, status_map[lid]);
-    //tprintf("%s >> revoke ===> call release rpc\n", id.c_str());
-    //ret = cl->call(lock_protocol::release, lid, id, r);
-    tprintf("%s >> revoke ===> cond_signal %d\n", id.c_str(), lid);
-    pthread_cond_signal(&status_cond_map[lid]);
-    goto RET_POINT;
-    VERIFY(0);
-  case RELEASING:
-    //this time seems ok
-    goto RET_POINT;
-    //seems wrong code
-    VERIFY(0);
-  default:
-    VERIFY(0);
+  } else {
+      tprintf("%s >> revoke ===> set revoked %d true\n", id.c_str(), lid);
+      revoked_map[lid] = true;
   }
+  tprintf("%s >> revoke ===> cond_broadcast %d\n", id.c_str(), lid);
+  pthread_cond_broadcast(&status_cond_map[lid]);
 RET_POINT:
   pthread_mutex_unlock(&status_mutex_map[lid]);
   tprintf("%s >> revoke ===> unlockd\n", id.c_str());
@@ -254,12 +219,10 @@ lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
   //    can this thread get the lock
   pthread_mutex_lock(&status_mutex_map[lid]);
   tprintf("%s >> retry => status %d\n", id.c_str(), status_map[lid]);
-  if (ACQUIRING == status_map[lid]) {
-      status_map[lid] = NONE;
-      tprintf("%s >> retry => set status to %d\n", id.c_str(), status_map[lid]);
-      tprintf("%s >> retry => cond signal %d\n", id.c_str(), lid);
-      pthread_cond_signal(&status_cond_map[lid]);
-  }
+  retried_map[lid] = true;
+  tprintf("%s >> retry => set retried true\n", id.c_str());
+  tprintf("%s >> retry => cond_broadcast %d\n", id.c_str(), lid);
+  pthread_cond_broadcast(&status_cond_map[lid]);
   pthread_mutex_unlock(&status_mutex_map[lid]);
   tprintf("%s >> retry => unlock\n", id.c_str());
   return ret;

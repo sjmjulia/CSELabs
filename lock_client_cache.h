@@ -29,6 +29,9 @@ class lock_client_cache : public lock_client {
   std::string id;
   enum oostatus { NONE, FREE, LOCKED, ACQUIRING, RELEASING, EARLY_REVOKED};
   std::map<int, oostatus> status_map;
+  std::map<int, int> waiters_num_map;
+  std::map<int, bool> revoked_map;
+  std::map<int, bool> retried_map;
   pthread_mutex_t status_map_mutex;
   std::map<int, pthread_mutex_t> status_mutex_map;
   std::map<int, pthread_cond_t> status_cond_map;

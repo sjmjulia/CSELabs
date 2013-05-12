@@ -33,6 +33,7 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
   int r;
   //create if not exists :-)
   pthread_mutex_lock(&lock_map_mutex);
+  ++nacquire;
   std::map<lid_t, bool>::iterator it;
 
   it = lock_map.find(lid);
@@ -62,11 +63,13 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
   if (lock_owner_map[lid] == id) {
     //he already owns the lock...
     tprintf("acquire => lid %d id %s I already owns the lock\n", lid, id.c_str());
+    lock_waiters_map[lid].insert(id);
     ret = lock_protocol::RETRY;
     pthread_mutex_unlock(&lock_mutex_map[lid]);
     tprintf("acquire => lid %d id %s returns the mutex\n", lid, id.c_str());
-    cl->call(rlock_protocol::revoke, lid, r);
+    //cl->call(rlock_protocol::revoke, lid, r);
     return ret;
+    VERIFY(0);
   }
 
   //somebody owns the lock
@@ -127,12 +130,9 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
   }
   */
   std::set<std::string> lock_waiters = lock_waiters_map[lid];
-  //unlock
-  pthread_mutex_unlock(&lock_mutex_map[lid]);
-  tprintf("release ==> lid %d id %s returns the thread\n", lid, id.c_str());
   //send retry
   std::set<std::string>::iterator waiter;
-  int cnt = 1;
+  int cnt = 2;
   for (waiter=lock_waiters.begin();
           waiter!=lock_waiters.end();
           ++waiter) {
@@ -144,10 +144,15 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
       tprintf("release ==> lid %d id %s call %s retry rpc\n", lid, id.c_str(), waiter->c_str());
       cl->call(rlock_protocol::retry, lid, rr);
   }
+
+  //unlock
+  pthread_mutex_unlock(&lock_mutex_map[lid]);
+  tprintf("release ==> lid %d id %s returns the thread\n", lid, id.c_str());
+  /*
   if (lock_waiters.size() > 1) {
       cl->call(rlock_protocol::revoke, lid, rr);
   }
-      
+  */
 //RET_POINT:
   return ret;
 }
