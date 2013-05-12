@@ -16,11 +16,11 @@ class extent_client {
  public:
   extent_client(std::string dst);
 
-  extent_protocol::status get(extent_protocol::extentid_t eid, 
+  virtual extent_protocol::status get(extent_protocol::extentid_t eid, 
 			      char* buf);
-  extent_protocol::status put(extent_protocol::extentid_t eid, char* buf);
-  extent_protocol::status getattr(extent_protocol::extentid_t eid, extent_protocol::attr &attr);
-  extent_protocol::status remove(extent_protocol::extentid_t eid);
+  virtual extent_protocol::status put(extent_protocol::extentid_t eid, char* buf);
+  virtual extent_protocol::status getattr(extent_protocol::extentid_t eid, extent_protocol::attr &attr);
+  virtual extent_protocol::status remove(extent_protocol::extentid_t eid);
         //filling begin
         ~extent_client();
         //filling end
