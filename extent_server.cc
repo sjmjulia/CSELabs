@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "ttprintf.h"
 
 extent_server::extent_server() 
 {
@@ -24,6 +25,7 @@ int extent_server::put(extent_protocol::extentid_t id, std::string buf, int &)
 {
   // You fill this in for Lab 2.
   
+    ttprintf("put =>\t%lld\n", id);
     int ret = extent_protocol::OK;
     int fd = 0;
     while (-1 == (fd = open("disk", O_RDWR | O_CREAT)));
@@ -45,6 +47,7 @@ int extent_server::put(extent_protocol::extentid_t id, std::string buf, int &)
 int extent_server::get(extent_protocol::extentid_t id, std::string &buf)
 {
   // You fill this in for Lab 2.
+    ttprintf("get ===>\t%lld\n", id);
     char b[BSIZE];
     int ret = extent_protocol::OK;
     int fd = 0;

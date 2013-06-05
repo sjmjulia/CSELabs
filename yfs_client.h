@@ -8,11 +8,19 @@
 #include <map>
 #include <fcntl.h>
 #include "lock_client.h"
+#include "lock_client_cache.h"
 
 #define YFS_SET_ATTR_SIZE  0x1
 class yfs_client {
   extent_client *ec;
   lock_client *lc;
+  class lock_flush_cache : public lock_release_user {
+   private:
+    extent_client *holy_shit_ec;
+   public:
+    lock_flush_cache(extent_client *);
+    virtual void dorelease(lock_protocol::lockid_t);
+  };
 
  public:
 
@@ -41,6 +49,9 @@ class yfs_client {
   static inum n2i(std::string);
 
     //filling begin
+    int safe_get(inum ino, char *buf, inum ignore);
+    int safe_put(inum &ino, char *buf, bool add, inum ignore);
+
     int get(inum ino, char *buf);
     int put(inum &ino, char *buf, bool add);
     int remove(inum ino);
@@ -64,6 +75,7 @@ class yfs_client {
   int unlink(inum parent, const std::string name);
 
   //finding begin
+  int inner_create(inum parent, const std::string name,inum &ino);
   int inner_read(inum ino,size_t size,off_t off,std::string &buf);
   int inner_write(inum ino,const char* buf,size_t &size,off_t off);
   bool issym(inum ino);

@@ -7,7 +7,8 @@
 #include "extent_protocol.h"
 #define BSIZE 512
 class extent_client {
- private:
+ //private:
+ protected:
   rpcc *cl;
     //filling begin
         int fd;
@@ -16,13 +17,13 @@ class extent_client {
  public:
   extent_client(std::string dst);
 
-  virtual extent_protocol::status get(extent_protocol::extentid_t eid, 
-			      char* buf);
+  virtual extent_protocol::status get(extent_protocol::extentid_t eid, char* buf);
   virtual extent_protocol::status put(extent_protocol::extentid_t eid, char* buf);
   virtual extent_protocol::status getattr(extent_protocol::extentid_t eid, extent_protocol::attr &attr);
   virtual extent_protocol::status remove(extent_protocol::extentid_t eid);
+  virtual extent_protocol::status flush(extent_protocol::extentid_t eid);
         //filling begin
-        ~extent_client();
+  virtual ~extent_client();
         //filling end
 };
 

@@ -410,6 +410,48 @@ main(int argc, char *argv[])
   for(i = 0; i < sizeof(huge)-1; i++)
     huge[i] = '0';
 
+  //addddddddddddd
+  printf("Concurrent creates: ");
+  pid = fork();
+  if(pid < 0){
+    perror("test-lab-2-a: fork");
+    exit(1);
+  }
+  if(pid == 0){
+    createn(d2, "xx", 20, false);
+    exit(0);
+  }
+  createn(d1, "yy", 20, false);
+  sleep(10);
+  reap(pid);
+  dircheck(d1, 40);
+  checkn(d1, "xx", 20);
+  checkn(d2, "yy", 20);
+  unlinkn(d1, "xx", 20);
+  unlinkn(d1, "yy", 20);
+  printf("OK\n");
+
+  printf("Concurrent create/delete: ");
+  createn(d1, "x1", 20, false);
+  createn(d2, "x2", 20, false);
+  pid = fork();
+  if(pid < 0){
+    perror("test-lab-2-a: fork");
+    exit(1);
+  }
+  if(pid == 0){
+    unlinkn(d2, "x1", 20);
+    createn(d1, "x3", 20, false);
+    exit(0);
+  }
+  createn(d1, "x4", 20, false);
+  reap(pid);
+  unlinkn(d2, "x2", 20);
+  unlinkn(d2, "x4", 20);
+  unlinkn(d2, "x3", 20);
+  dircheck(d1, 0);
+  printf("OK\n");
+  //additional
   printf("Create then read: ");
   create1(d1, "f1", "aaa");
   check1(d2, "f1", "aaa");

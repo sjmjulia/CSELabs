@@ -148,19 +148,21 @@ CHECK_POINT:
   case LOCKED:
     //release the lock and send signal
     if (revoked_map[lid] && 0 == waiters_num_map[lid]) {
-        status_map[lid] = RELEASING;
-        revoked_map[lid] = false;
-        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
-        tprintf("%s >> release ===> unlock to call release\n", id.c_str());
-        pthread_mutex_unlock(&status_mutex_map[lid]);
-        ret = cl->call(lock_protocol::release, lid, id, r);
-        pthread_mutex_lock(&status_mutex_map[lid]);
-        tprintf("%s >> release ===> lock to deal with release rpc response\n", id.c_str());
-        status_map[lid] = NONE;
-        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), RELEASING, status_map[lid]);
+      status_map[lid] = RELEASING;
+      revoked_map[lid] = false;
+      tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
+      //============flush cache here
+      if (lu) lu->dorelease(lid);
+      tprintf("%s >> release ===> unlock to call release\n", id.c_str());
+      pthread_mutex_unlock(&status_mutex_map[lid]);
+      ret = cl->call(lock_protocol::release, lid, id, r);
+      pthread_mutex_lock(&status_mutex_map[lid]);
+      tprintf("%s >> release ===> lock to deal with release rpc response\n", id.c_str());
+      status_map[lid] = NONE;
+      tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), RELEASING, status_map[lid]);
     } else {
-        status_map[lid] = FREE;
-        tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
+      status_map[lid] = FREE;
+      tprintf("%s >> release ===> set status from %d to %d\n", id.c_str(), LOCKED, status_map[lid]);
     }
     tprintf("%s >> release ===> cond_signal %d\n", id.c_str(), lid);
     pthread_cond_signal(&status_cond_map[lid]);
@@ -196,10 +198,12 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
     tprintf("%s >> revoke ===> set status from %d to %d\n", id.c_str(), status_map[lid], NONE);
     status_map[lid] = NONE;
     tprintf("%s >> revoke ===> call release\n", id.c_str());
+    //============flush cache here
+    if (lu) lu->dorelease(lid);
     ret = cl->call(lock_protocol::release, lid, id, r);
   } else {
-      tprintf("%s >> revoke ===> set revoked %d true\n", id.c_str(), lid);
-      revoked_map[lid] = true;
+    tprintf("%s >> revoke ===> set revoked %d true\n", id.c_str(), lid);
+    revoked_map[lid] = true;
   }
   tprintf("%s >> revoke ===> cond_broadcast %d\n", id.c_str(), lid);
   pthread_cond_broadcast(&status_cond_map[lid]);

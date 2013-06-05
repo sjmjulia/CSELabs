@@ -1,6 +1,7 @@
 // yfs client.  implements FS operations using extent and lock server
 #include "yfs_client.h"
-#include "extent_client.h"
+//#include "extent_client.h"
+#include "extent_client_cache.h"
 #include "lock_client_cache.h"
 #include <sstream>
 #include <iostream>
@@ -13,15 +14,33 @@
 #include <sstream>
 #include <map>
 #include <string.h>
+#include "ttprintf.h"
 
+yfs_client::lock_flush_cache::lock_flush_cache(extent_client *hsec)
+  :holy_shit_ec(hsec)
+{
+    //nothing to do
+    ttprintf("lock_flush_cache => I am living to death...\n");
+}
+
+void
+yfs_client::lock_flush_cache::dorelease(lock_protocol::lockid_t lid)
+{
+    ttprintf("lock_flush_cache::dorelease=> flusing lid %d...\n", lid);
+  holy_shit_ec->flush(lid);
+}
 
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
+#if 0
   ec = new extent_client(extent_dst);
+#else
+  ec = new extent_client_cache(extent_dst);
+#endif
 #if 0
   lc = new lock_client(lock_dst);
 #else
-  lc = new lock_client_cache(lock_dst);
+  lc = new lock_client_cache(lock_dst, new lock_flush_cache(ec));
 #endif
     //filling begin
     char buf[BSIZE];
@@ -34,16 +53,22 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     //block-bitmap
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET) = 1;
     *(buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (1 >> 3)) |= 1 << (1 & 0x7);
+    lc->acquire(0);
     ec->put(0, buf);
+    lc->release(0);
     /////////////////////BLOCK-BITMAP from 10 ~ 200
     memset(buf, 0, BSIZE);
+    lc->acquire(BLOCK_BITMAP_END_BLOCK);
     ec->put(BLOCK_BITMAP_END_BLOCK, buf);
+    lc->release(BLOCK_BITMAP_END_BLOCK);
     *(buf) = 1;
     *(buf + (1 >> 3)) |= 1 << (1 & 0x7);
     for (int i=BLOCK_BITMAP_BEGIN_BLOCK; i<=BLOCK_BITMAP_END_BLOCK; ++i) {
         *(buf + (i >> 3)) |= 1 << (i & 0x7);
     }
+    lc->acquire(BLOCK_BITMAP_BEGIN_BLOCK);
     ec->put(BLOCK_BITMAP_BEGIN_BLOCK, buf);
+    lc->release(BLOCK_BITMAP_BEGIN_BLOCK);
 
     // root block
     memset(buf, 0, BSIZE);
@@ -52,7 +77,9 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
     ((inode*)buf)->atime = 0;
     ((inode*)buf)->mtime = 0;
     ((inode*)buf)->ctime = 0;
+    lc->acquire(1);
     ec->put(1, buf);
+    lc->release(1);
     //filling end
 }
 
@@ -82,7 +109,8 @@ yfs_client::isfile(inum inum)
     char buf[BSIZE];
     bool ret = false;
     lc->acquire(inum);
-    if (OK != get(inum, buf)) {
+    ttprintf("isfile:=> locked %lld\n", inum);
+    if (OK != safe_get(inum, buf, inum)) {
         ret = false;
         goto over;
     }
@@ -90,6 +118,7 @@ yfs_client::isfile(inum inum)
     //filling end
 over:
     lc->release(inum);
+    ttprintf("isfile:=> unlocked %lld\n", inum);
     return ret;
 }
 
@@ -99,14 +128,16 @@ yfs_client::isdir(inum inum)
     //filling begin
     char buf[BSIZE];
     bool ret = false;
+    ttprintf("isdir:=> locked %lld\n", inum);
     lc->acquire(inum);
-    if (OK != get(inum, buf)) {
+    if (OK != safe_get(inum, buf, inum)) {
         ret = false;
         goto over;
     }
     ret = (0==M_INODE_PTR(buf)->mode);
 over:
     lc->release(inum);
+    ttprintf("isdir:=> unlocked %lld\n", inum);
     return ret;
     //filling begin
   return ! isfile(inum);
@@ -122,8 +153,9 @@ yfs_client::getfile(inum inum, fileinfo &fin)
   //fin.size = 0;
     //filling begin
     char buf[BSIZE];
+    ttprintf("getfile:=> locked %lld\n", inum);
     lc->acquire(inum);
-    int ret = get(inum, buf);
+    int ret = safe_get(inum, buf, inum);
     if (NOENT == ret) {
         ret = NOENT;
         goto over;
@@ -140,6 +172,7 @@ yfs_client::getfile(inum inum, fileinfo &fin)
     ret = OK;
 over:
     lc->release(inum);
+    ttprintf("getfile:=> unlocked %lld\n", inum);
     return ret;
 }
 
@@ -153,7 +186,8 @@ yfs_client::getdir(inum inum, dirinfo &din)
     //filling begin
     char buf[BSIZE];
     lc->acquire(inum);
-    int ret = get(inum, buf);
+    ttprintf("getdir:=> locked %lld\n", inum);
+    int ret = safe_get(inum, buf, inum);
     if (NOENT == ret) {
         goto over;
     }
@@ -168,6 +202,7 @@ yfs_client::getdir(inum inum, dirinfo &din)
     ret = OK;
 over:
     lc->release(inum);
+    ttprintf("getdir:=> unlocked %lld\n", inum);
     return ret;
 }
 
@@ -175,15 +210,14 @@ over:
 //filling begin
 int yfs_client::get(inum ino, char *buf) {
     if (ino < BLOCK_BITMAP_BEGIN_BLOCK || ino > BLOCK_BITMAP_END_BLOCK) {
-        //char super_block_buf[BSIZE];
-        //get(0, super_block_buf);
-        //if (!((*(super_block_buf + SUPER_BLOCK_BLOCK_BITMAP_OFFSET + (ino >> 3)) >> (ino & 0x7)) & 1)) {
-        //    return NOENT;
-        //}
+
         inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
         inum bitmap = ino % BITMAP_PER_BLOCK;
         char bitmap_block_buf[BSIZE];
-        get(bitmap_block, bitmap_block_buf);
+        //safe_get(bitmap_block, bitmap_block_buf, 0);
+        lc->acquire(bitmap_block);
+        ec->get(bitmap_block, bitmap_block_buf);
+        lc->release(bitmap_block);
         if (!((*(bitmap_block_buf + (bitmap >> 3)) >> (bitmap & 0x7)) & 1)) {
             return NOENT;
         }
@@ -203,9 +237,13 @@ int yfs_client::put(inum &ino, char *buf, bool add) {
                 last_bitmap_block = bitmap_block;
             }
             inum bitmap = i % BITMAP_PER_BLOCK;
-            get(bitmap_block, bitmap_block_buf);
+            //safe_get(bitmap_block, bitmap_block_buf, bitmap_block);
+            ec->get(bitmap_block, bitmap_block_buf);
             if (!((*(bitmap_block_buf + (bitmap >> 3)) >> (bitmap & 0x7)) & 1)) {
-                if (OK != ec->put(i, buf)) {
+                lc->acquire(i);
+                ret = ec->put(i, buf);
+                lc->release(i);
+                if (OK != ret) {
                     ret = IOERR;
                     goto over;
                 }
@@ -228,12 +266,19 @@ over:
         return ret;
 
     } else {
-        inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
-        inum bitmap = ino % BITMAP_PER_BLOCK;
-        char bitmap_block_buf[BSIZE];
-        get(bitmap_block, bitmap_block_buf);
-        if (!((*(bitmap_block_buf + (bitmap >> 3)) >> (bitmap & 0x7)) & 1)) {
-            return NOENT;
+        if (ino < BLOCK_BITMAP_BEGIN_BLOCK || ino > BLOCK_BITMAP_END_BLOCK) {
+            inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
+            inum bitmap = ino % BITMAP_PER_BLOCK;
+            char bitmap_block_buf[BSIZE];
+            //safe_get(bitmap_block, bitmap_block_buf, 0);
+            
+            lc->acquire(bitmap_block);
+            ec->get(bitmap_block, bitmap_block_buf);
+            lc->release(bitmap_block);
+
+            if (!((*(bitmap_block_buf + (bitmap >> 3)) >> (bitmap & 0x7)) & 1)) {
+                return NOENT;
+            }
         }
         ec->put(ino, buf);
         return OK;
@@ -242,13 +287,16 @@ over:
 
 int yfs_client::remove(inum ino) {
     inum bitmap_block = BLOCK_BITMAP_BEGIN_BLOCK + ino / BITMAP_PER_BLOCK;
-    lc->acquire(bitmap_block);
     inum bitmap = ino % BITMAP_PER_BLOCK;
     char bitmap_block_buf[BSIZE];
-    get(bitmap_block, bitmap_block_buf);
+    //safe_get(bitmap_block, bitmap_block_buf, bitmap_block);
+    lc->acquire(bitmap_block);
+
+    ec->get(bitmap_block, bitmap_block_buf);
     *(bitmap_block_buf + (bitmap >> 3)) &= ~(1 << (bitmap & 0x7));
     int ret = IOERR;
-    if (OK != put(bitmap_block, bitmap_block_buf, 0)) {
+    //if (OK != safe_put(bitmap_block, bitmap_block_buf, 0, bitmap_block)) {
+    if (OK != ec->put(bitmap_block, bitmap_block_buf)) {
        ret = IOERR;
        goto over;
     }
@@ -264,6 +312,7 @@ int
 yfs_client::create(inum parent, const std::string name,inum &ino)
 {
   
+    ttprintf("create===================> parent: %lld name: %s ino: %lld\n", parent, name.c_str(), ino);
     int ret = OK;
     char buf[BSIZE];
     char tmp_buf[BSIZE];
@@ -271,9 +320,10 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     inum target = parent;
 
     lc->acquire(parent);                                            //+
-    get(parent, buf);
+    ttprintf("create:=> locked %lld\n", parent);
+    safe_get(parent, buf, parent);
     M_INODE_PTR(buf)->ctime = M_INODE_PTR(buf)->mtime = time(0);
-    if (OK != put(parent, buf, 0)) {
+    if (OK != safe_put(parent, buf, 0, parent)) {
         ret = IOERR;
         goto over;
     }
@@ -285,20 +335,25 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
             if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
                 ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
                 goto over;
+            } else {
+                ttprintf("create:=> found key %lld value %s\n",
+                        M_INODE_PTR(buf)->dir_entries[i].inum,
+                        M_INODE_PTR(buf)->dir_entries[i].name);
+
             }
         }
         //proess
         if (M_INODE_PTR(buf)->next_inode) {
             target = M_INODE_PTR(buf)->next_inode;
-            get(target, buf);
+            safe_get(target, buf, parent);
         } else {
             memset(tmp_buf, 0, BSIZE);
-            if (OK != put(tmp, tmp_buf, 1)) {
+            if (OK != safe_put(tmp, tmp_buf, 1, parent)) {
                 ret = IOERR;
                 goto over;
             }
             M_INODE_PTR(buf)->next_inode = tmp;
-            if (OK != put(target, buf, 0)) {
+            if (OK != safe_put(target, buf, 0, parent)) {
                 ret = IOERR;
                 goto over;
             }
@@ -309,6 +364,10 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
         if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
             ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
             goto over;
+        } else {
+            ttprintf("create:=> found key %lld value %s\n",
+                    M_INODE_PTR(buf)->dir_entries[i].inum,
+                    M_INODE_PTR(buf)->dir_entries[i].name);
         }
     }
     //new file block
@@ -317,7 +376,7 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     M_INODE_PTR(tmp_buf)->atime = 0;
     M_INODE_PTR(tmp_buf)->mtime = time(0);
     M_INODE_PTR(tmp_buf)->ctime = time(0);
-    if (OK != put(tmp, tmp_buf, 1)) {
+    if (OK != safe_put(tmp, tmp_buf, 1, parent)) {
         ret = IOERR;
         goto over;
     }
@@ -325,7 +384,7 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     strcpy(M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].name, name.c_str());
     M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].inum = tmp;
     M_INODE_PTR(buf)->size++;
-    if (OK != put(target, buf, 0)) {
+    if (OK != safe_put(target, buf, 0, parent)) {
         ret = IOERR;
         goto over;
     }
@@ -333,7 +392,27 @@ yfs_client::create(inum parent, const std::string name,inum &ino)
     ret = OK;
 
 over:
+    /*
+    safe_get(parent, buf, parent);
+    while (1){
+        if (!M_INODE_PTR(buf)->next_inode) break;
+        safe_get(M_INODE_PTR(buf)->next_inode, buf, parent);
+    }
+    */
     lc->release(parent);                                    //-
+    ttprintf("create:=> unlocked %lld\n", parent);
+    /*
+
+    std::map<inum,std::string> items;
+    std::map<inum,std::string>::iterator it;
+    readdir(parent, items);
+    int count = 0;
+    for (it=items.begin(); it!=items.end(); ++it) {
+        ttprintf("%d: inode %lld name %s\n", count++, it->first, it->second.c_str());
+    }
+    */
+
+
     return ret;
 }
 
@@ -344,10 +423,11 @@ yfs_client::lookup(inum parent, const std::string name)
     char buf[BSIZE];
 
     lc->acquire(parent);                                    //+
+    ttprintf("lookup:=> locked %lld\n", parent);
 
-    get(parent, buf);
+    safe_get(parent, buf, parent);
     M_INODE_PTR(buf)->atime = time(0);
-    if (OK != put(parent, buf, 0)) {
+    if (OK != safe_put(parent, buf, 0, parent)) {
         ////////trick here.
         ret = IOERR;
         goto over;
@@ -361,11 +441,12 @@ yfs_client::lookup(inum parent, const std::string name)
             }
         }
         if (!M_INODE_PTR(buf)->next_inode) break;
-        get(M_INODE_PTR(buf)->next_inode, buf);
+        safe_get(M_INODE_PTR(buf)->next_inode, buf, parent);
     }
 
 over:
     lc->release(parent);
+    ttprintf("lookup:=> unlocked %lld\n", parent);
     return ret;
 }
 
@@ -375,10 +456,11 @@ int yfs_client::readdir(inum ino,std::map<inum,std::string> &items)
     char buf[BSIZE];
 
     lc->acquire(ino);                                       //+
+    ttprintf("readdir:=> locked %lld\n", ino);
     items.clear();
-    get(ino, buf);
+    safe_get(ino, buf, ino);
     M_INODE_PTR(buf)->atime = time(0);
-    if (OK != put(ino, buf, 0)) {
+    if (OK != safe_put(ino, buf, 0, ino)) {
         ret = IOERR;
         goto over;
     }
@@ -387,13 +469,17 @@ int yfs_client::readdir(inum ino,std::map<inum,std::string> &items)
         for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
             items[M_INODE_PTR(buf)->dir_entries[i].inum]
                 = std::string(M_INODE_PTR(buf)->dir_entries[i].name);
+            ttprintf("readdir:=> key %lld value %s\n", 
+                    M_INODE_PTR(buf)->dir_entries[i].inum, 
+                    M_INODE_PTR(buf)->dir_entries[i].name);
         }
         if (!M_INODE_PTR(buf)->next_inode) break;
-        get(M_INODE_PTR(buf)->next_inode, buf);
+        safe_get(M_INODE_PTR(buf)->next_inode, buf, ino);
     }
     ret = OK;
 over:
     lc->release(ino);                                       //-
+    ttprintf("readdir:=> unlocked %lld\n", ino);
     return ret;
 }
 
@@ -402,7 +488,8 @@ int yfs_client::setattr(inum ino,int to_set,const fileinfo &info)
     int ret = OK;
     char buf[BSIZE];
     lc->acquire(ino);                                       //+
-    get(ino, buf);
+    ttprintf("setattr:=> locked %lld\n", ino);
+    safe_get(ino, buf, ino);
     M_INODE_PTR(buf)->atime = info.atime;
     M_INODE_PTR(buf)->mtime = info.mtime;
     M_INODE_PTR(buf)->ctime = info.ctime;
@@ -412,12 +499,13 @@ int yfs_client::setattr(inum ino,int to_set,const fileinfo &info)
         inner_write(tmp, (const char *)buf, write_size, (off_t)info.size);
         M_INODE_PTR(buf)->size = info.size;
     }
-    if (OK != put(ino, buf, 0)) {
+    if (OK != safe_put(ino, buf, 0, ino)) {
         ret = IOERR;
         goto over;
     }
 over:
     lc->release(ino);                                       //-
+    ttprintf("setattr:=> unlocked %lld\n", ino);
     return ret;
 }
 
@@ -446,10 +534,10 @@ yfs_client::mkdir(inum parent, const std::string name,inum &ino)
     lc->acquire(parent);
 
     inum tmp = 0;
-    get(parent, buf);
+    safe_get(parent, buf, parent);
     M_INODE_PTR(buf)->ctime = time(0);
     M_INODE_PTR(buf)->mtime = time(0);
-    put(parent, buf, 0);
+    safe_put(parent, buf, 0, parent);
 
     inum target = parent;
     //search new blank entry
@@ -457,12 +545,12 @@ yfs_client::mkdir(inum parent, const std::string name,inum &ino)
         /////////////////check duplicate ?
         if (M_INODE_PTR(buf)->next_inode) {
             target = M_INODE_PTR(buf)->next_inode;
-            get(target, buf);
+            safe_get(target, buf, parent);
         } else {
             memset(tmp_buf, 0, BSIZE);
-            put(tmp, tmp_buf, 1);
+            safe_put(tmp, tmp_buf, 1, parent);
             M_INODE_PTR(buf)->next_inode = tmp;
-            put(target, buf, 0);
+            safe_put(target, buf, 0, parent);
         }
     }
     //new file block
@@ -470,12 +558,12 @@ yfs_client::mkdir(inum parent, const std::string name,inum &ino)
     M_INODE_PTR(tmp_buf)->atime = 0;
     M_INODE_PTR(tmp_buf)->mtime = time(0);
     M_INODE_PTR(tmp_buf)->ctime = time(0);
-    put(tmp, tmp_buf, 1);
+    safe_put(tmp, tmp_buf, 1, parent);
     //fill in entry
     strcpy(M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].name, name.c_str());
     M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].inum = tmp;
     M_INODE_PTR(buf)->size++;
-    put(target, buf, 0);
+    safe_put(target, buf, 0, parent);
     ino = tmp;
 
     lc->release(parent);
@@ -485,6 +573,7 @@ yfs_client::mkdir(inum parent, const std::string name,inum &ino)
 int
 yfs_client::unlink(inum parent, const std::string name)
 {
+    ttprintf("unlink===================> parent: %lld name: %s\n", parent, name.c_str());
     int ret = OK;
 
     char buf[BSIZE];
@@ -493,10 +582,10 @@ yfs_client::unlink(inum parent, const std::string name)
     
     lc->acquire(parent);
 
-    get(parent, buf);
+    safe_get(parent, buf, parent);
     M_INODE_PTR(buf)->mtime = time(0);
     M_INODE_PTR(buf)->ctime = time(0);
-    put(parent, buf, 0);
+    safe_put(parent, buf, 0, parent);
     inum index = 0;
     bool found = false;
     while (1){
@@ -509,10 +598,10 @@ yfs_client::unlink(inum parent, const std::string name)
         if (found) break;
         if (!M_INODE_PTR(buf)->next_inode) break;
         buf_inum = M_INODE_PTR(buf)->next_inode;
-        get(buf_inum, buf);
+        safe_get(buf_inum, buf, parent);
     }
     if (!found) {
-        printf("unlink: not found!\n");
+        ttprintf("unlink: not found!\n");
         ret = NOENT;
         goto over;
     }
@@ -531,12 +620,21 @@ yfs_client::unlink(inum parent, const std::string name)
             = M_INODE_PTR(buf)->dir_entries[i];
         M_INODE_PTR(new_buf)->size++;
     }
-    put(buf_inum, new_buf, 0);
+    safe_put(buf_inum, new_buf, 0, parent);
 
     recursive_unlink(unlink_inum);
 over:
     lc->release(parent);
-    printf("sfsdddddddddddddddddddddddddddddddddddddddddddddddddddddddd %d\n", ret);
+    ttprintf("sfsdddddddddddddddddddddddddddddddddddddddddddddddddddddddd %d\n", ret);
+    /*
+    std::map<inum,std::string> items;
+    std::map<inum,std::string>::iterator it;
+    readdir(parent, items);
+    int count = 0;
+    for (it=items.begin(); it!=items.end(); ++it) {
+        ttprintf("%d: inode %lld name %s\n", count++, it->first, it->second.c_str());
+    }
+    */
     return ret;
 }
 
@@ -544,7 +642,7 @@ over:
 int yfs_client::recursive_unlink(inum ino) {
     if (!ino) return 0;
     char buf[BSIZE];
-    get(ino, buf);
+    safe_get(ino, buf, 0);
     for (inum i=0; i<INODE_DIRECT_BLOCK_NUM; ++i) {
         if (M_INODE_PTR(buf)->direct_blocks[i]) {
             remove(M_INODE_PTR(buf)->direct_blocks[i]);
@@ -564,9 +662,12 @@ bool
 yfs_client::issym(inum ino)
 {
     char buf[BSIZE];
+    lc->acquire(ino);
+    ttprintf("issym:=> %lld\n", ino);
     if (OK != get(ino, buf)) {
         return false;
     }
+    lc->release(ino);
     return 2==M_INODE_PTR(buf)->mode;
 }
 
@@ -576,7 +677,9 @@ yfs_client::symlink(inum parent, const std::string name,
 {
     std::cout << "sdf sd " << std::endl;
     inum tmp;
-    int ret = create(parent, name, tmp);
+    lc->acquire(parent);
+    ttprintf("symlink:=> locked %lld\n", parent);
+    int ret = inner_create(parent, name, tmp);
     std::cout << "createdsd " << std::endl;
     size_t len = link.size();
 
@@ -588,14 +691,16 @@ yfs_client::symlink(inum parent, const std::string name,
     if (OK != ret) goto ret_pnt;;
 
     char buf[BSIZE];
-    if (OK != get(tmp, buf)) goto ret_pnt;
+    if (OK != safe_get(tmp, buf, parent)) goto ret_pnt;
 
     std::cout << "moded" << std::endl;
     M_INODE_PTR(buf)->mode = 2;
-    if (OK != put(tmp, buf, 0)) goto ret_pnt;
+    if (OK != safe_put(tmp, buf, 0, parent)) goto ret_pnt;
 
     ino = tmp;
 ret_pnt:
+    lc->release(parent);
+    ttprintf("symlink:=> unlocked %lld\n", parent);
     return ret;
 }
 
@@ -606,11 +711,34 @@ yfs_client::readlink(inum ino, std::string &link)
     int ret = 0;
     fileinfo info;
 
-    getfile(ino, info);
+    //getfile(ino, info);
+    char buf[BSIZE];
+    ttprintf("readlink:=> locked %lld\n", ino);
+    lc->acquire(ino);
+    ret = safe_get(ino, buf, ino);
+    if (NOENT == ret) {
+        ret = NOENT;
+        goto over;
+    }
+    if (OK != ret) {
+        ret = IOERR;
+        goto over;
+    }
+    info.atime = M_INODE_PTR(buf)->atime;
+    info.mtime = M_INODE_PTR(buf)->mtime;
+    info.ctime = M_INODE_PTR(buf)->ctime;
+    info.size = M_INODE_PTR(buf)->size;
+    //filling end
+    ret = OK;
     ret = inner_read(ino, info.size, 0, link);
 
+over:
+    lc->release(ino);
+    ttprintf("readlink:=> unlocked %lld\n", ino);
     return ret;
+
 }
+
 int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
 {
     int r = IOERR;
@@ -619,11 +747,11 @@ int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
     buf = "";
     if (0 == size) return OK;
 
-    if (NOENT == get(ino, inode_buf)) {
+    if (NOENT == safe_get(ino, inode_buf, ino)) {
         return NOENT;
     }
     M_INODE_PTR(inode_buf)->atime = time(0);
-    if (OK != put(ino, inode_buf, 0)) {
+    if (OK != safe_put(ino, inode_buf, 0, ino)) {
         return IOERR;
     }
     inum filesize = M_INODE_PTR(inode_buf)->size;
@@ -633,7 +761,7 @@ int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
         //touch the data block
         if (index >= INODE_DIRECT_BLOCK_NUM) {
             if (M_INODE_PTR(inode_buf)->next_inode) {
-                get(M_INODE_PTR(inode_buf)->next_inode, inode_buf);
+                safe_get(M_INODE_PTR(inode_buf)->next_inode, inode_buf, ino);
             } else {
                 //return EOF;
                 return OK;
@@ -664,7 +792,7 @@ int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
         //touch the data block
         if (index >= INODE_DIRECT_BLOCK_NUM) {
             if (M_INODE_PTR(inode_buf)->next_inode) {
-                get(M_INODE_PTR(inode_buf)->next_inode, inode_buf);
+                safe_get(M_INODE_PTR(inode_buf)->next_inode, inode_buf, ino);
             } else {
                 //EOF;
                 return OK;
@@ -679,14 +807,14 @@ int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
         //reading the data
         if (size <= filesize) {
             if (size <= BSIZE - off) {
-                get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+                safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
                 //may be a \0 in data
                 buf.append(data_buf + off, size);
                 filesize -= size;
                 size = 0;
                 break;
             } else {
-                get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+                safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
                 buf.append(data_buf + off, BSIZE - off);
                 size -= BSIZE - off;
                 filesize -= BSIZE - off;
@@ -697,14 +825,14 @@ int yfs_client::inner_read(inum ino,size_t size,off_t off,std::string &buf)
             //size > filesize
             r = EOF;
             if (filesize <= BSIZE - off) {
-                get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+                safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
                 //may be a \0 in data
                 buf.append(data_buf + off, filesize);
                 size -= filesize;
                 filesize = 0;
                 break;
             } else {
-                get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+                safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
                 buf.append(data_buf + off, BSIZE - off);
                 size -= BSIZE - off;
                 filesize -= BSIZE - off;
@@ -727,12 +855,12 @@ int yfs_client::inner_write(inum ino,const char* buf,size_t &size,off_t off)
     memset(tmp_buf, 0, BSIZE);
     inum tmp = 0;
 
-    if (NOENT == get(ino, inode_buf)) {
+    if (NOENT == safe_get(ino, inode_buf, ino)) {
         return NOENT;
     }
     M_INODE_PTR(inode_buf)->atime = time(0);
     M_INODE_PTR(inode_buf)->mtime = time(0);
-    if (OK != put(ino, inode_buf, 0)) {
+    if (OK != safe_put(ino, inode_buf, 0, ino)) {
         return IOERR;
     }
     long long filesize = M_INODE_PTR(inode_buf)->size;
@@ -748,29 +876,29 @@ int yfs_client::inner_write(inum ino,const char* buf,size_t &size,off_t off)
                 tmp = 0;
                 memset(tmp_buf, 0, BSIZE);
                 M_INODE_PTR(tmp_buf)->mode = 1;
-                if (OK != put(tmp, tmp_buf, 1)) {
+                if (OK != safe_put(tmp, tmp_buf, 1, ino)) {
                     return IOERR;
                 }
                 M_INODE_PTR(inode_buf)->next_inode = tmp;
-                if (OK != put(target, inode_buf, 0)) {
+                if (OK != safe_put(target, inode_buf, 0, ino)) {
                     return IOERR;
                 }
             }
             target = M_INODE_PTR(inode_buf)->next_inode;
-            get(target, inode_buf);
+            safe_get(target, inode_buf, ino);
             index = 0;
         }
         if (!M_INODE_PTR(inode_buf)->direct_blocks[index]) {
             //create next direct block
             tmp = 0;
             memset(tmp_buf, 0, BSIZE);
-            put(tmp, tmp_buf, 1);
+            safe_put(tmp, tmp_buf, 1, ino);
             M_INODE_PTR(inode_buf)->direct_blocks[index] = tmp;
-            put(target, inode_buf, 0);
+            safe_put(target, inode_buf, 0, ino);
         }
         if (filesize < 0) {
             memset(tmp_buf, 0, BSIZE);
-            put(M_INODE_PTR(inode_buf)->direct_blocks[index], tmp_buf, 0);
+            safe_put(M_INODE_PTR(inode_buf)->direct_blocks[index], tmp_buf, 0, ino);
         }
         if (off >= BSIZE) {
             off -= BSIZE;
@@ -790,38 +918,38 @@ int yfs_client::inner_write(inum ino,const char* buf,size_t &size,off_t off)
                 tmp = 0;
                 memset(tmp_buf, 0, BSIZE);
                 M_INODE_PTR(tmp_buf)->mode = 1;
-                put(tmp, tmp_buf, 1);
+                safe_put(tmp, tmp_buf, 1, ino);
                 M_INODE_PTR(inode_buf)->next_inode = tmp;
-                put(target, inode_buf, 0);
+                safe_put(target, inode_buf, 0, ino);
             }
             target = M_INODE_PTR(inode_buf)->next_inode;
-            get(target, inode_buf);
+            safe_get(target, inode_buf, ino);
             index = 0;
         }
         if (!M_INODE_PTR(inode_buf)->direct_blocks[index]) {
             //create next direct block
             tmp = 0;
             memset(tmp_buf, 0, BSIZE);
-            put(tmp, tmp_buf, 1);
+            safe_put(tmp, tmp_buf, 1, ino);
             M_INODE_PTR(inode_buf)->direct_blocks[index] = tmp;
-            put(target, inode_buf, 0);
+            safe_put(target, inode_buf, 0, ino);
         }
         if (filesize < 0) {
             memset(tmp_buf, 0, BSIZE);
-            put(M_INODE_PTR(inode_buf)->direct_blocks[index], tmp_buf, 0);
+            safe_put(M_INODE_PTR(inode_buf)->direct_blocks[index], tmp_buf, 0, ino);
         }
         //
         if (size <= BSIZE - off) {
-            get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+            safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
             memcpy(data_buf + off, buf, size);
-            put(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, 0);
+            safe_put(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, 0, ino);
             buf += size;
             size = 0;
             break;
         } else {
-            get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf);
+            safe_get(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, ino);
             memcpy(data_buf + off, buf, BSIZE - off);
-            put(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, 0);
+            safe_put(M_INODE_PTR(inode_buf)->direct_blocks[index], data_buf, 0, ino);
             buf += BSIZE - off;
             size -= BSIZE - off;
             filesize -= BSIZE - off;
@@ -830,13 +958,118 @@ int yfs_client::inner_write(inum ino,const char* buf,size_t &size,off_t off)
         }
     }
 
-    get(ino, inode_buf);
+    safe_get(ino, inode_buf, ino);
     M_INODE_PTR(inode_buf)->size = new_filesize;
-    put(ino, inode_buf, 0);
+    safe_put(ino, inode_buf, 0, ino);
     size = saved_size;
 
     return OK;
   return r;
 }
 
+int
+yfs_client::inner_create(inum parent, const std::string name,inum &ino)
+{
+  
+    ttprintf("inner_create===============> parent: %lld name: %s ino: %lld\n", parent, name.c_str(), ino);
+    int ret = OK;
+    char buf[BSIZE];
+    char tmp_buf[BSIZE];
+    inum tmp = 0;
+    inum target = parent;
+
+    safe_get(parent, buf, parent);
+    M_INODE_PTR(buf)->ctime = M_INODE_PTR(buf)->mtime = time(0);
+    if (OK != safe_put(parent, buf, 0, parent)) {
+        ret = IOERR;
+        goto over;
+    }
+
+    //search new blank entry
+    while (M_INODE_PTR(buf)->size >= INODE_DIR_ENTRY_NUM) {
+        //check duplicated
+        for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
+            if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
+                ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
+                goto over;
+            } else {
+                ttprintf("inner_create:=> found key %lld value %s\n",
+                        M_INODE_PTR(buf)->dir_entries[i].inum,
+                        M_INODE_PTR(buf)->dir_entries[i].name);
+
+            }
+        }
+        //proess
+        if (M_INODE_PTR(buf)->next_inode) {
+            target = M_INODE_PTR(buf)->next_inode;
+            safe_get(target, buf, parent);
+        } else {
+            memset(tmp_buf, 0, BSIZE);
+            if (OK != safe_put(tmp, tmp_buf, 1, parent)) {
+                ret = IOERR;
+                goto over;
+            }
+            M_INODE_PTR(buf)->next_inode = tmp;
+            if (OK != safe_put(target, buf, 0, parent)) {
+                ret = IOERR;
+                goto over;
+            }
+        }
+    }
+    //check duplicated
+    for (inum i=0; i<M_INODE_PTR(buf)->size; ++i) {
+        if (!strcmp(M_INODE_PTR(buf)->dir_entries[i].name, name.c_str())) {
+            ino = (M_INODE_PTR(buf)->dir_entries[i].inum);
+            goto over;
+        } else {
+            ttprintf("inner_create:=> found key %lld value %s\n",
+                    M_INODE_PTR(buf)->dir_entries[i].inum,
+                    M_INODE_PTR(buf)->dir_entries[i].name);
+        }
+    }
+    //new file block
+    memset(tmp_buf, 0, BSIZE);
+    M_INODE_PTR(tmp_buf)->mode = 1;
+    M_INODE_PTR(tmp_buf)->atime = 0;
+    M_INODE_PTR(tmp_buf)->mtime = time(0);
+    M_INODE_PTR(tmp_buf)->ctime = time(0);
+    if (OK != safe_put(tmp, tmp_buf, 1, parent)) {
+        ret = IOERR;
+        goto over;
+    }
+    //fill in entry
+    strcpy(M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].name, name.c_str());
+    M_INODE_PTR(buf)->dir_entries[M_INODE_PTR(buf)->size].inum = tmp;
+    M_INODE_PTR(buf)->size++;
+    if (OK != safe_put(target, buf, 0, parent)) {
+        ret = IOERR;
+        goto over;
+    }
+    ino = tmp;
+    ret = OK;
+
+over:
+    return ret;
+}
+
+int
+yfs_client::safe_get(inum ino, char *buf, inum ignore)
+{
+    if (ino == ignore) return get(ino, buf);
+    lc->acquire(ino);
+    int ret = get(ino, buf);
+    lc->release(ino);
+    return ret;
+}
+
+int
+yfs_client::safe_put(inum &ino, char *buf, bool add, inum ignore)
+{
+    if (add || ino == ignore) return put(ino, buf, add);
+    lc->acquire(ino);
+    int ret = put(ino, buf, add);
+    lc->release(ino);
+    return ret;
+}
 //finding end
+
